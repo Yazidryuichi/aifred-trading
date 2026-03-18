@@ -1,0 +1,288 @@
+[
+  {
+    "id": "seed_001",
+    "timestamp": "2026-03-17T14:36:52.882Z",
+    "type": "system_start",
+    "severity": "success",
+    "title": "Trading System Started",
+    "message": "AIFred trading engine initialized in paper mode. Monitoring 8 assets across 3 brokers.",
+    "details": {
+      "tier": "paper"
+    }
+  },
+  {
+    "id": "seed_scan_0",
+    "timestamp": "2026-03-17T15:08:19.902Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 8 assets. Found 3 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_scan_1",
+    "timestamp": "2026-03-17T18:10:06.157Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 5 assets. Found 0 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_t1",
+    "timestamp": "2026-03-17T19:36:52.882Z",
+    "type": "trade_executed",
+    "severity": "success",
+    "title": "Trade Executed: LONG EUR/USD",
+    "message": "Opened LONG position on EUR/USD via OANDA. Momentum breakout confirmed by multi-timeframe analysis.",
+    "details": {
+      "asset": "EUR/USD",
+      "side": "LONG",
+      "strategy": "Momentum Breakout",
+      "confidence": 84,
+      "entry_price": 1.0872,
+      "stop_loss": 1.0835,
+      "take_profit": 1.0945,
+      "broker": "OANDA",
+      "tier": "A",
+      "reasoning": "Bullish signal on EUR/USD via Momentum Breakout. RSI oversold with momentum divergence confirming entry. Support level validated. Risk/reward ratio 2.3:1 meets minimum threshold.",
+      "technical_signals": "RSI oversold (28.3), MACD bullish crossover, price above SMA50",
+      "sentiment_signals": "FinBERT: bullish (0.82), social consensus: positive, Fear & Greed: 65",
+      "risk_assessment": "Kelly size: 2.1% of portfolio, ATR stop: 1.0835, R:R ratio 2.3:1"
+    }
+  },
+  {
+    "id": "seed_scan_2",
+    "timestamp": "2026-03-17T21:13:29.263Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 11 assets. Found 0 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_rej1",
+    "timestamp": "2026-03-17T21:36:52.882Z",
+    "type": "signal_rejected",
+    "severity": "warning",
+    "title": "Signal Rejected: BTC/USDT",
+    "message": "SHORT signal on BTC/USDT rejected — confidence below threshold (62% < 78% minimum).",
+    "details": {
+      "asset": "BTC/USDT",
+      "side": "SHORT",
+      "strategy": "Mean Reversion",
+      "confidence": 62,
+      "reasoning": "Technical indicators suggested overbought but sentiment remained strongly bullish. Confidence 62% below 78% threshold.",
+      "technical_signals": "RSI overbought (74.2), Bollinger Band upper touch, volume declining",
+      "sentiment_signals": "FinBERT: bullish (0.78), social consensus: very positive, Fear & Greed: 72",
+      "risk_assessment": "Position rejected — confidence below minimum threshold"
+    }
+  },
+  {
+    "id": "seed_t2",
+    "timestamp": "2026-03-17T23:36:52.882Z",
+    "type": "trade_executed",
+    "severity": "success",
+    "title": "Trade Executed: LONG BTC/USDT",
+    "message": "Opened LONG position on BTC/USDT via Binance. Trend following setup with strong multi-factor confirmation.",
+    "details": {
+      "asset": "BTC/USDT",
+      "side": "LONG",
+      "strategy": "Trend Following",
+      "confidence": 89,
+      "entry_price": 67450.2,
+      "stop_loss": 66200,
+      "take_profit": 69800,
+      "broker": "Binance",
+      "tier": "A+",
+      "reasoning": "Bullish signal on BTC/USDT via Trend Following. RSI neutral with strong upward momentum. Golden cross confirmed on EMA20/50. Volume surge +42% supports breakout.",
+      "technical_signals": "RSI neutral (52.1), MACD histogram expanding, EMA20/50 golden cross, volume surge +42%",
+      "sentiment_signals": "FinBERT: bullish (0.88), social consensus: positive, Fear & Greed: 68",
+      "risk_assessment": "Kelly size: 2.8% of portfolio, ATR stop: 66200, R:R ratio 1.9:1"
+    }
+  },
+  {
+    "id": "seed_scan_3",
+    "timestamp": "2026-03-18T00:31:16.505Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 13 assets. Found 0 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_sig1",
+    "timestamp": "2026-03-18T01:36:52.882Z",
+    "type": "signal_generated",
+    "severity": "info",
+    "title": "Signal: AAPL",
+    "message": "LONG signal generated for AAPL. Earnings beat catalyst combined with technical breakout above resistance.",
+    "details": {
+      "asset": "AAPL",
+      "side": "LONG",
+      "strategy": "Multi-Factor",
+      "confidence": 81,
+      "entry_price": 178.45,
+      "stop_loss": 175.2,
+      "take_profit": 184,
+      "technical_signals": "Price breaking above 178 resistance, RSI (58.3), MACD bullish, volume +28%",
+      "sentiment_signals": "FinBERT: bullish (0.76), earnings beat +8%, institutional buying detected",
+      "risk_assessment": "Kelly size: 1.9%, stop: 175.20, R:R ratio 1.7:1"
+    }
+  },
+  {
+    "id": "seed_t3",
+    "timestamp": "2026-03-18T02:36:52.882Z",
+    "type": "trade_executed",
+    "severity": "success",
+    "title": "Trade Executed: LONG AAPL",
+    "message": "Opened LONG position on AAPL via Alpaca. Multi-factor signal confirmed with high conviction.",
+    "details": {
+      "asset": "AAPL",
+      "side": "LONG",
+      "strategy": "Multi-Factor",
+      "confidence": 81,
+      "entry_price": 178.52,
+      "stop_loss": 175.2,
+      "take_profit": 184,
+      "broker": "Alpaca",
+      "tier": "A",
+      "reasoning": "Bullish signal on AAPL via Multi-Factor analysis. Breakout above 178 resistance confirmed. Earnings catalyst + institutional flow. Confidence 81%.",
+      "technical_signals": "Breakout above 178 resistance confirmed, RSI (58.3), volume +28%",
+      "sentiment_signals": "FinBERT: bullish (0.76), earnings beat +8%, institutional flow positive",
+      "risk_assessment": "Kelly size: 1.9%, stop: 175.20, R:R ratio 1.7:1"
+    }
+  },
+  {
+    "id": "seed_scan_4",
+    "timestamp": "2026-03-18T03:25:47.221Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 11 assets. Found 3 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_scan_5",
+    "timestamp": "2026-03-18T06:14:42.758Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 8 assets. Found 0 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_tc1",
+    "timestamp": "2026-03-18T06:36:52.882Z",
+    "type": "trade_closed",
+    "severity": "info",
+    "title": "Trade Closed: EUR/USD",
+    "message": "Closed LONG EUR/USD at take profit. P&L: +$186.40 (+0.67%).",
+    "details": {
+      "asset": "EUR/USD",
+      "side": "LONG",
+      "strategy": "Momentum Breakout",
+      "entry_price": 1.0872,
+      "take_profit": 1.0945,
+      "pnl": 186.4,
+      "broker": "OANDA",
+      "reasoning": "Take profit hit at 1.0945. Trade duration: 11 hours. Momentum thesis confirmed."
+    }
+  },
+  {
+    "id": "seed_t4",
+    "timestamp": "2026-03-18T08:36:52.882Z",
+    "type": "trade_executed",
+    "severity": "success",
+    "title": "Trade Executed: LONG SOL/USDT",
+    "message": "Opened LONG position on SOL/USDT via Binance. Volatility expansion setup with strong ecosystem momentum.",
+    "details": {
+      "asset": "SOL/USDT",
+      "side": "LONG",
+      "strategy": "Volatility Expansion",
+      "confidence": 86,
+      "entry_price": 142.35,
+      "stop_loss": 136.8,
+      "take_profit": 155,
+      "broker": "Binance",
+      "tier": "A+",
+      "reasoning": "Bullish signal on SOL/USDT via Volatility Expansion. Bollinger squeeze breakout with volume surge +55%. DeFi TVL surge supports thesis.",
+      "technical_signals": "RSI rising (61.5), Bollinger squeeze breakout, volume +55%, price above all major MAs",
+      "sentiment_signals": "FinBERT: bullish (0.85), DeFi TVL surge, social consensus: very positive, Fear & Greed: 70",
+      "risk_assessment": "Kelly size: 2.4%, ATR stop: 136.80, R:R ratio 2.3:1"
+    }
+  },
+  {
+    "id": "seed_scan_6",
+    "timestamp": "2026-03-18T09:25:10.802Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 5 assets. Found 0 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_opt1",
+    "timestamp": "2026-03-18T11:36:52.882Z",
+    "type": "optimization",
+    "severity": "info",
+    "title": "Strategy Optimization",
+    "message": "Completed walk-forward optimization for Momentum Breakout strategy. Sharpe improved from 1.82 to 2.14.",
+    "details": {
+      "strategy": "Momentum Breakout",
+      "reasoning": "Adjusted RSI entry threshold from 30 to 28, tightened stop-loss ATR multiplier from 2.0x to 1.8x based on last 30 days backtest."
+    }
+  },
+  {
+    "id": "seed_scan_7",
+    "timestamp": "2026-03-18T12:18:45.074Z",
+    "type": "scan_complete",
+    "severity": "info",
+    "title": "Market Scan Complete",
+    "message": "Scanned 7 assets. Found 1 actionable signals.",
+    "details": {}
+  },
+  {
+    "id": "seed_t5",
+    "timestamp": "2026-03-18T12:36:52.882Z",
+    "type": "trade_executed",
+    "severity": "success",
+    "title": "Trade Executed: LONG NVDA",
+    "message": "Opened LONG position on NVDA via Alpaca. AI sector momentum with strong institutional accumulation.",
+    "details": {
+      "asset": "NVDA",
+      "side": "LONG",
+      "strategy": "Trend Following",
+      "confidence": 91,
+      "entry_price": 892.5,
+      "stop_loss": 870,
+      "take_profit": 935,
+      "broker": "Alpaca",
+      "tier": "A+",
+      "reasoning": "Bullish signal on NVDA via Trend Following. All-time-high breakout confirmed. AI sector catalysts + institutional accumulation. Very high confidence 91%.",
+      "technical_signals": "RSI strong (64.8), MACD bullish momentum, all-time-high breakout, volume +38%",
+      "sentiment_signals": "FinBERT: very bullish (0.93), AI sector catalyst, institutional accumulation, Fear & Greed: 74",
+      "risk_assessment": "Kelly size: 3.0%, stop: 870.00, R:R ratio 1.9:1"
+    }
+  },
+  {
+    "id": "seed_sig2",
+    "timestamp": "2026-03-18T13:21:52.882Z",
+    "type": "signal_generated",
+    "severity": "info",
+    "title": "Signal: ETH/USDT",
+    "message": "LONG signal generated for ETH/USDT. Ethereum upgrade catalyst combined with bullish market structure.",
+    "details": {
+      "asset": "ETH/USDT",
+      "side": "LONG",
+      "strategy": "Multi-Factor",
+      "confidence": 83,
+      "entry_price": 3520.4,
+      "stop_loss": 3420,
+      "take_profit": 3720,
+      "technical_signals": "RSI neutral-bullish (56.2), MACD bullish crossover, ascending triangle breakout, volume +22%",
+      "sentiment_signals": "FinBERT: bullish (0.80), upcoming Dencun upgrade, social consensus: positive, Fear & Greed: 66",
+      "risk_assessment": "Kelly size: 2.2%, stop: 3420, R:R ratio 2.0:1"
+    }
+  }
+]

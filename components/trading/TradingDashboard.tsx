@@ -695,79 +695,74 @@ export default function TradingDashboard() {
       </div>
 
       {/* ─── Header ─────────────────────────────────────────── */}
-      <header className="relative z-10 border-b border-white/[0.06] px-6 py-4">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center">
-              <Brain className="w-5 h-5 text-white" />
+      <header className="relative z-10 border-b border-white/[0.06] px-4 md:px-6 py-3 md:py-4">
+        <div className="max-w-[1600px] mx-auto">
+          {/* Top row: Logo + Execute Trade + Settings */}
+          <div className="flex items-center justify-between mb-3 md:mb-0">
+            <div className="flex items-center gap-3 md:gap-4">
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center">
+                <Brain className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1
+                  className="text-lg font-bold tracking-tight"
+                  style={{ fontFamily: "Outfit, sans-serif" }}
+                >
+                  AIFred
+                </h1>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-2 h-2 rounded-full bg-emerald-400"
+                    style={{ animation: "pulse-glow 2s ease-in-out infinite" }}
+                  />
+                  <span
+                    className="text-[10px] text-emerald-400/80 tracking-wider"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    7 AGENTS ONLINE
+                  </span>
+                </div>
+              </div>
             </div>
-            <div>
-              <h1
-                className="text-lg font-bold tracking-tight"
+
+            <div className="flex items-center gap-2 md:gap-4">
+              {/* Execute Trade Button — always visible, prominent */}
+              <button
+                onClick={() => setShowTradeModal(true)}
+                className="flex items-center gap-2 px-4 md:px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-xs md:text-sm font-bold transition-all shadow-lg shadow-emerald-500/25 active:scale-95"
                 style={{ fontFamily: "Outfit, sans-serif" }}
               >
-                AIFred
-              </h1>
-              <p
-                className="text-[11px] text-zinc-500 tracking-[0.2em] uppercase"
-                style={{ fontFamily: "JetBrains Mono, monospace" }}
+                <ArrowUpDown className="w-4 h-4" />
+                <span>Execute Trade</span>
+              </button>
+
+              {/* Settings */}
+              <button
+                onClick={() => router.push("/trading/settings")}
+                className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
+                title="Settings"
               >
-                Multi-Agent Trading Intelligence
-              </p>
+                <Settings className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
-            {/* System Status */}
-            <div className="flex items-center gap-2">
-              <div
-                className="w-2 h-2 rounded-full bg-emerald-400"
-                style={{ animation: "pulse-glow 2s ease-in-out infinite" }}
-              />
-              <span
-                className="text-xs text-emerald-400/80 tracking-wider"
+          {/* Nav tabs — scrollable on mobile */}
+          <div className="flex gap-1 bg-white/[0.03] rounded-lg p-1 overflow-x-auto">
+            {(["overview", "trades", "activity", "agents"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex-1 md:flex-none px-3 md:px-4 py-1.5 text-xs font-medium rounded-md transition-all tracking-wider uppercase whitespace-nowrap ${
+                  activeTab === tab
+                    ? "bg-white/[0.08] text-white"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
                 style={{ fontFamily: "JetBrains Mono, monospace" }}
               >
-                7 AGENTS ONLINE
-              </span>
-            </div>
-
-            {/* Nav tabs */}
-            <div className="flex gap-1 bg-white/[0.03] rounded-lg p-1">
-              {(["overview", "trades", "activity", "agents"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all tracking-wider uppercase ${
-                    activeTab === tab
-                      ? "bg-white/[0.08] text-white"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                  style={{ fontFamily: "JetBrains Mono, monospace" }}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {/* Execute Trade Button */}
-            <button
-              onClick={() => setShowTradeModal(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold transition-all shadow-lg shadow-emerald-500/20"
-              style={{ fontFamily: "Outfit, sans-serif" }}
-            >
-              <ArrowUpDown className="w-3.5 h-3.5" />
-              Execute Trade
-            </button>
-
-            {/* Settings */}
-            <button
-              onClick={() => router.push("/trading/settings")}
-              className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
-              title="Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+                {tab}
+              </button>
+            ))}
           </div>
         </div>
       </header>
@@ -1504,6 +1499,16 @@ function ActivityTab() {
     );
   }
 
+  // Separate user-executed trades (from localStorage) for the "Your Trades" section
+  const userTrades = useMemo(() => {
+    try {
+      const local: ActivityEntry[] = JSON.parse(localStorage.getItem("aifred_local_trades") || "[]");
+      return local.filter((e) => e.type === "trade_executed").slice(0, 20);
+    } catch {
+      return [];
+    }
+  }, [activities]); // re-derive when activities changes
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -1512,6 +1517,120 @@ function ActivityTab() {
       transition={{ duration: 0.3 }}
       className="space-y-4 pb-12"
     >
+      {/* ─── Your Executed Trades (always visible) ─────────── */}
+      <div className="card-glass rounded-2xl p-5" style={{ borderColor: userTrades.length > 0 ? "rgba(16,185,129,0.15)" : undefined }}>
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          Your Executed Trades
+          <span className="text-[11px] text-emerald-400/70 font-normal">
+            {userTrades.length} trades
+          </span>
+        </h3>
+        {userTrades.length === 0 ? (
+          <div className="text-center py-8">
+            <ArrowUpDown className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+            <p className="text-sm text-zinc-500 mb-1">No trades executed yet</p>
+            <p className="text-xs text-zinc-600">
+              Click the <span className="text-emerald-400 font-semibold">Execute Trade</span> button above to place your first trade
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+            {userTrades.map((trade) => {
+              const isExpanded = expandedId === trade.id;
+              return (
+                <motion.div
+                  key={trade.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-xl border border-emerald-500/10 bg-emerald-500/[0.03] overflow-hidden"
+                >
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : trade.id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-emerald-500/[0.02] transition-colors"
+                  >
+                    <TrendingUp className={`w-4 h-4 flex-shrink-0 ${trade.details?.side === "SHORT" ? "text-red-400" : "text-emerald-400"}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold text-white">{trade.title}</span>
+                        {trade.details?.tier && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                            trade.details.tier === "A+" ? "bg-amber-500/15 text-amber-400" :
+                            trade.details.tier === "A" ? "bg-emerald-500/15 text-emerald-400" :
+                            "bg-indigo-500/15 text-indigo-400"
+                          }`} style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                            {trade.details.tier}
+                          </span>
+                        )}
+                        {trade.details?.confidence !== undefined && (
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                            trade.details.confidence >= 85 ? "bg-emerald-500/10 text-emerald-400" :
+                            trade.details.confidence >= 75 ? "bg-amber-500/10 text-amber-400" :
+                            "bg-red-500/10 text-red-400"
+                          }`} style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                            {trade.details.confidence}%
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{trade.message}</p>
+                      {!isExpanded && trade.details?.reasoning && (
+                        <p className="text-[10px] text-indigo-400/70 mt-0.5 flex items-center gap-1">
+                          <Brain className="w-2.5 h-2.5 flex-shrink-0" />
+                          <span className="truncate">{trade.details.reasoning.slice(0, 90)}{trade.details.reasoning.length > 90 ? "..." : ""}</span>
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[10px] text-zinc-600" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                        {timeAgo(trade.timestamp)}
+                      </span>
+                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-zinc-600" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-600" />}
+                    </div>
+                  </button>
+                  <AnimatePresence>
+                    {isExpanded && trade.details && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="px-4 pb-4 space-y-3">
+                          {/* Trade stats grid */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                            {trade.details.asset && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Asset</div><div className="text-zinc-300">{trade.details.asset}</div></div>}
+                            {trade.details.side && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Side</div><div className={trade.details.side === "LONG" ? "text-emerald-400" : "text-red-400"}>{trade.details.side}</div></div>}
+                            {trade.details.entry_price !== undefined && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Entry</div><div className="text-zinc-300">${trade.details.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</div></div>}
+                            {trade.details.strategy && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Strategy</div><div className="text-zinc-300">{trade.details.strategy}</div></div>}
+                            {trade.details.stop_loss !== undefined && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Stop Loss</div><div className="text-red-400">${trade.details.stop_loss.toFixed(2)}</div></div>}
+                            {trade.details.take_profit !== undefined && <div className="bg-white/[0.03] rounded-lg px-3 py-2"><div className="text-[9px] text-zinc-600 uppercase mb-0.5">Take Profit</div><div className="text-emerald-400">${trade.details.take_profit.toFixed(2)}</div></div>}
+                          </div>
+                          {/* Reasoning sections */}
+                          {trade.details.reasoning && (
+                            <div className="card-glass rounded-xl p-4"><div className="text-[10px] text-indigo-400 uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}><Brain className="w-3 h-3" /> AI Reasoning</div><p className="text-xs text-zinc-400 leading-relaxed">{trade.details.reasoning}</p></div>
+                          )}
+                          {trade.details.technical_signals && (
+                            <div className="card-glass rounded-xl p-4"><div className="text-[10px] text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}><BarChart3 className="w-3 h-3" /> Technical Signals</div><p className="text-xs text-zinc-400 leading-relaxed">{trade.details.technical_signals}</p></div>
+                          )}
+                          {trade.details.sentiment_signals && (
+                            <div className="card-glass rounded-xl p-4"><div className="text-[10px] text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}><Zap className="w-3 h-3" /> Sentiment</div><p className="text-xs text-zinc-400 leading-relaxed">{trade.details.sentiment_signals}</p></div>
+                          )}
+                          {trade.details.risk_assessment && (
+                            <div className="card-glass rounded-xl p-4"><div className="text-[10px] text-red-400 uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}><Shield className="w-3 h-3" /> Risk</div><p className="text-xs text-zinc-400 leading-relaxed">{trade.details.risk_assessment}</p></div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ─── Full Agent Reasoning Log ─────────────────────── */}
       <div className="card-glass rounded-2xl p-5">
         <h3 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
           <Activity className="w-4 h-4 text-zinc-500" />
