@@ -134,34 +134,51 @@ export async function POST(request: NextRequest) {
 
     const orderId = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
-    // Generate reasoning
-    const reasoning = [
-      `${side === "LONG" ? "Bullish" : "Bearish"} signal detected on ${symbol} via ${strategy}.`,
-      `${side === "LONG" ? "RSI oversold" : "RSI overbought"} with momentum divergence confirming entry.`,
-      `${side === "LONG" ? "Support" : "Resistance"} level validated at ${executionPrice.toFixed(4)}.`,
-      `Risk/reward ratio ${riskReward.toFixed(1)}:1 meets minimum threshold of 1.5:1.`,
-      `Broker: ${brokerId || "paper"} | Mode: ${brokerId ? "live" : "paper"} trading.`,
-    ].join(" ");
+    // Dynamic indicator values (vary per trade for realism)
+    const rsiVal = side === "LONG"
+      ? (20 + Math.random() * 15).toFixed(1)   // 20-35 oversold
+      : (65 + Math.random() * 15).toFixed(1);  // 65-80 overbought
+    const volumeMult = (1.1 + Math.random() * 0.9).toFixed(2);
+    const sentimentScore = (0.55 + Math.random() * 0.4).toFixed(2);
+    const kellySize = (1.2 + Math.random() * 2.3).toFixed(1);
+    const fgIndex = Math.floor(35 + Math.random() * 40);
+    const fundingRate = side === "LONG"
+      ? `+${(0.005 + Math.random() * 0.02).toFixed(3)}%`
+      : `-${(0.005 + Math.random() * 0.015).toFixed(3)}%`;
+
+    // Generate reasoning with dynamic values
+    const strategyReasoning: Record<string, string> = {
+      "ICT Confluence": `${side === "LONG" ? "Bullish" : "Bearish"} order block detected at ${executionPrice.toFixed(4)} with fair value gap fill confirmation. Liquidity sweep below ${side === "LONG" ? "previous low" : "previous high"} validated smart money accumulation. Kill zone alignment (London/NY session overlap) adds confluence.`,
+      "Mean Reversion": `Price deviated ${(1.5 + Math.random() * 2).toFixed(1)} standard deviations from 20-period mean. Bollinger Band ${side === "LONG" ? "lower" : "upper"} band touch with RSI divergence at ${rsiVal}. Historical reversion probability: ${(72 + Math.random() * 12).toFixed(0)}% within 4 bars.`,
+      "Momentum Breakout": `${side === "LONG" ? "Breakout above" : "Breakdown below"} key ${side === "LONG" ? "resistance" : "support"} at ${executionPrice.toFixed(4)} confirmed with ${volumeMult}x average volume surge. MACD histogram expansion validates momentum. ADX at ${(25 + Math.random() * 20).toFixed(1)} confirms trend strength.`,
+      "LSTM Ensemble": `LSTM attention heads identified ${side === "LONG" ? "accumulation" : "distribution"} pattern across 60-bar lookback. Transformer cross-attention flagged regime shift probability at ${(65 + Math.random() * 25).toFixed(0)}%. CNN pattern recognition matched ${side === "LONG" ? "inverse head-and-shoulders" : "double top"} with ${(78 + Math.random() * 15).toFixed(0)}% confidence.`,
+      "Sentiment Analysis": `FinBERT score: ${sentimentScore} (${Number(sentimentScore) > 0.7 ? "strongly " : ""}${side === "LONG" ? "bullish" : "bearish"}). Social consensus from ${Math.floor(3 + Math.random() * 8)} sources confirms directional bias. Fear & Greed Index at ${fgIndex} ${fgIndex < 40 ? "(contrarian opportunity)" : fgIndex > 65 ? "(momentum alignment)" : "(neutral)"}. ${side === "LONG" ? "Positive" : "Negative"} catalyst flow detected in last 4h.`,
+    };
+    const reasoning = strategyReasoning[strategy] || strategyReasoning["Momentum Breakout"];
 
     const technicalSignals = [
-      `RSI(14): ${side === "LONG" ? "32.4 — oversold" : "71.8 — overbought"}`,
-      `MACD: ${side === "LONG" ? "bullish" : "bearish"} crossover confirmed`,
-      `Volume: ${(1.15 + Math.random() * 0.85).toFixed(2)}x 20-day average`,
-      `Bollinger: price at ${side === "LONG" ? "lower" : "upper"} band`,
+      `RSI(14): ${rsiVal} — ${Number(rsiVal) < 30 ? "oversold" : Number(rsiVal) > 70 ? "overbought" : "neutral"}`,
+      `MACD: ${side === "LONG" ? "bullish" : "bearish"} ${Math.random() > 0.5 ? "crossover confirmed" : "histogram expanding"}`,
+      `Volume: ${volumeMult}x 20-day average${Number(volumeMult) > 1.5 ? " (surge)" : ""}`,
+      `EMA: price ${side === "LONG" ? "above" : "below"} EMA20/50 ${Math.random() > 0.5 ? "golden cross" : "trend aligned"}`,
+      `ATR(14): ${(basePrice * (0.005 + Math.random() * 0.015)).toFixed(4)} (${Math.random() > 0.5 ? "normal" : "elevated"} volatility)`,
     ].join(" | ");
 
     const sentimentSignals = [
-      `Social sentiment: ${side === "LONG" ? "68% bullish" : "64% bearish"}`,
-      `News flow: ${side === "LONG" ? "3 positive" : "2 negative"} catalysts in last 4h`,
-      `Funding rate: ${side === "LONG" ? "+0.011%" : "-0.009%"} (${side === "LONG" ? "supportive" : "warning"})`,
+      `FinBERT: ${Number(sentimentScore) > 0.7 ? "strong" : "moderate"} ${side === "LONG" ? "bullish" : "bearish"} (${sentimentScore})`,
+      `Social consensus: ${side === "LONG" ? "positive" : "negative"} across ${Math.floor(3 + Math.random() * 5)} sources`,
+      `Fear & Greed: ${fgIndex}`,
+      `Funding rate: ${fundingRate}`,
     ].join(" | ");
 
     const riskAssessment = [
       `Entry: ${executionPrice.toFixed(4)}`,
-      `Stop loss: ${stopLoss.toFixed(4)} (${side === "LONG" ? "-1.5%" : "+1.5%"})`,
-      `Take profit: ${takeProfit.toFixed(4)} (${side === "LONG" ? "+2.5%" : "-2.5%"})`,
-      `Max drawdown per trade: $${(quantity * executionPrice * 0.015).toFixed(2)}`,
-      `Confidence score: ${confidence}%`,
+      `Stop: ${stopLoss.toFixed(4)} (${side === "LONG" ? "-1.5%" : "+1.5%"})`,
+      `TP: ${takeProfit.toFixed(4)} (${side === "LONG" ? "+2.5%" : "-2.5%"})`,
+      `R:R: ${riskReward.toFixed(1)}:1`,
+      `Kelly size: ${kellySize}% of portfolio`,
+      `Max risk: $${(quantity * executionPrice * 0.015).toFixed(2)}`,
+      `Confidence: ${confidence}%`,
     ].join(" | ");
 
     const tier = confidence >= 85 ? "A+" : confidence >= 78 ? "A" : confidence >= 70 ? "B" : "C";

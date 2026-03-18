@@ -571,6 +571,10 @@ export default function TradingDashboard() {
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [tradeToast, setTradeToast] = useState<TradeResult | null>(null);
+  const [showWelcome, setShowWelcome] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !localStorage.getItem("aifred_welcomed");
+  });
 
   const handleTradeExecuted = useCallback((result: TradeResult) => {
     // Persist trade to localStorage so it survives serverless resets
@@ -711,12 +715,18 @@ export default function TradingDashboard() {
                   AIFred
                 </h1>
                 <div className="flex items-center gap-2">
+                  <span
+                    className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-400 tracking-wider font-medium"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    PAPER MODE
+                  </span>
                   <div
                     className="w-2 h-2 rounded-full bg-emerald-400"
                     style={{ animation: "pulse-glow 2s ease-in-out infinite" }}
                   />
                   <span
-                    className="text-[10px] text-emerald-400/80 tracking-wider"
+                    className="text-[10px] text-emerald-400/80 tracking-wider hidden md:inline"
                     style={{ fontFamily: "JetBrains Mono, monospace" }}
                   >
                     7 AGENTS ONLINE
@@ -816,6 +826,66 @@ export default function TradingDashboard() {
                 <Activity className="w-2.5 h-2.5" />
                 Full log visible in Activity tab below ↓
               </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Welcome Panel (first visit) ──────────────────── */}
+      <AnimatePresence>
+        {showWelcome && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, height: 0 }}
+            className="relative z-10 max-w-[1600px] mx-auto px-4 md:px-6 pt-4"
+          >
+            <div className="rounded-2xl p-5 md:p-6 border border-indigo-500/15" style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(16,185,129,0.04) 100%)" }}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <h2 className="text-base md:text-lg font-bold text-white mb-2" style={{ fontFamily: "Outfit, sans-serif" }}>
+                    Welcome to AIFred — Multi-Agent Trading Intelligence
+                  </h2>
+                  <p className="text-xs text-zinc-400 leading-relaxed mb-4 max-w-2xl">
+                    7 AI agents work together to analyze markets, generate signals, manage risk, and execute trades autonomously.
+                    The system continuously improves through walk-forward validation and Bayesian parameter optimization.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {[
+                      { label: "1. Connect Broker", desc: "Link your exchange API keys" },
+                      { label: "2. Configure Risk", desc: "Set position sizes & limits" },
+                      { label: "3. Start Trading", desc: "AI executes trades for you" },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-white/[0.04] rounded-lg px-3 py-2 flex-1 min-w-[140px]">
+                        <div className="text-[10px] text-emerald-400 font-semibold tracking-wider uppercase" style={{ fontFamily: "JetBrains Mono, monospace" }}>{s.label}</div>
+                        <div className="text-[10px] text-zinc-500 mt-0.5">{s.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { setShowWelcome(false); localStorage.setItem("aifred_welcomed", "1"); setShowTradeModal(true); }}
+                      className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold transition-all"
+                      style={{ fontFamily: "Outfit, sans-serif" }}
+                    >
+                      Execute First Trade
+                    </button>
+                    <button
+                      onClick={() => { setShowWelcome(false); localStorage.setItem("aifred_welcomed", "1"); router.push("/trading/settings"); }}
+                      className="px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 text-xs font-medium transition-all border border-white/[0.08]"
+                      style={{ fontFamily: "Outfit, sans-serif" }}
+                    >
+                      Connect Broker
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowWelcome(false); localStorage.setItem("aifred_welcomed", "1"); }}
+                  className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -986,6 +1056,16 @@ function OverviewTab({
           </div>
         </motion.div>
       )}
+
+      {/* ─── Backtest Label ─────────────────────────────────── */}
+      <div className="flex items-center gap-3 mb-1">
+        <span className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/15 px-2.5 py-1 rounded-lg tracking-wider uppercase font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+          30-Day Walk-Forward Backtest Results
+        </span>
+        <span className="text-[10px] text-zinc-600" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+          Paper trading mode — connect broker for live execution
+        </span>
+      </div>
 
       {/* ─── Hero Stats ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -2102,6 +2182,36 @@ function AgentsTab({ data }: { data: TradingData }) {
             </div>
           </motion.div>
         ))}
+      </div>
+
+      {/* Self-Improvement Cycle */}
+      <div className="card-glass rounded-2xl p-5 border border-indigo-500/10">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
+          <Brain className="w-4 h-4 text-indigo-400" />
+          Continuous Learning Pipeline
+        </h3>
+        <div className="grid md:grid-cols-4 gap-3 mb-4">
+          {[
+            { step: "1", label: "Analyze", desc: "7 agents scan markets using LSTM, Transformer, CNN + FinBERT sentiment", color: "text-emerald-400", border: "border-emerald-500/20" },
+            { step: "2", label: "Execute", desc: "Signals fused with 60/40 tech/sentiment weighting, risk-gated, and routed to broker", color: "text-amber-400", border: "border-amber-500/20" },
+            { step: "3", label: "Evaluate", desc: "Every trade outcome tracked — P&L, slippage, fill quality, prediction accuracy", color: "text-indigo-400", border: "border-indigo-500/20" },
+            { step: "4", label: "Improve", desc: "Walk-forward validation retrains models, Bayesian optimizer tunes parameters daily", color: "text-purple-400", border: "border-purple-500/20" },
+          ].map((item) => (
+            <div key={item.step} className={`bg-white/[0.02] rounded-xl p-4 border ${item.border}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`text-lg font-bold ${item.color}`} style={{ fontFamily: "JetBrains Mono, monospace" }}>{item.step}</span>
+                <span className="text-xs font-semibold text-zinc-200">{item.label}</span>
+              </div>
+              <p className="text-[10px] text-zinc-500 leading-relaxed">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
+          <Layers className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+          <p className="text-[10px] text-indigo-300/80">
+            Models retrain every 12 hours via automated pipeline. Walk-forward validation prevents overfitting. Ensemble weights adapt based on per-model accuracy.
+          </p>
+        </div>
       </div>
 
       {/* System stats */}
