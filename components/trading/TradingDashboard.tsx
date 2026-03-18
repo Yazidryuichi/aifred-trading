@@ -220,6 +220,24 @@ function ExecuteTradeModal({
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<TradeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(8);
+
+  // Auto-close 8 seconds after result appears
+  useEffect(() => {
+    if (!result) return;
+    setCountdown(8);
+    const timer = setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          clearInterval(timer);
+          onClose();
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [result, onClose]);
 
   const handleExecute = useCallback(async () => {
     setExecuting(true);
@@ -425,19 +443,29 @@ function ExecuteTradeModal({
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
-                    Order Filled
+                    Order Filled ✓
                   </h2>
                   <p className="text-[11px] text-emerald-400/70 tracking-wider" style={{ fontFamily: "JetBrains Mono, monospace" }}>
                     {result.orderId}
                   </p>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center hover:bg-white/[0.08] transition-colors text-zinc-500 hover:text-zinc-300"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-600" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                  closing in {countdown}s
+                </span>
+                <button
+                  onClick={onClose}
+                  className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center hover:bg-white/[0.08] transition-colors text-zinc-500 hover:text-zinc-300"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            {/* Note: Switching to Activity Log tab */}
+            <div className="mb-4 px-3 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-2">
+              <Brain className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+              <span className="text-[11px] text-indigo-300">Full reasoning log saved to <strong>Activity</strong> tab — auto-opens when this closes.</span>
             </div>
 
             {/* Key stats */}
@@ -463,15 +491,41 @@ function ExecuteTradeModal({
               ))}
             </div>
 
-            {/* Reasoning */}
-            {result.reasoning && (
-              <div className="bg-white/[0.02] border border-white/[0.05] rounded-lg p-3 mb-4">
-                <div className="text-[10px] text-zinc-600 tracking-wider uppercase mb-1.5 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                  <Brain className="w-3 h-3" /> AI Reasoning
+            {/* Reasoning + Signals */}
+            <div className="space-y-2 mb-4 max-h-[40vh] overflow-y-auto pr-1">
+              {result.reasoning && (
+                <div className="bg-white/[0.02] border border-indigo-500/20 rounded-lg p-3">
+                  <div className="text-[10px] text-indigo-400 tracking-wider uppercase mb-1.5 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    <Brain className="w-3 h-3" /> AI Reasoning
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed">{result.reasoning}</p>
                 </div>
-                <p className="text-xs text-zinc-400 leading-relaxed">{result.reasoning}</p>
-              </div>
-            )}
+              )}
+              {result.technicalSignals && (
+                <div className="bg-white/[0.02] border border-emerald-500/20 rounded-lg p-3">
+                  <div className="text-[10px] text-emerald-400 tracking-wider uppercase mb-1.5 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    <BarChart3 className="w-3 h-3" /> Technical Signals
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">{result.technicalSignals}</p>
+                </div>
+              )}
+              {result.sentimentSignals && (
+                <div className="bg-white/[0.02] border border-amber-500/20 rounded-lg p-3">
+                  <div className="text-[10px] text-amber-400 tracking-wider uppercase mb-1.5 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    <Zap className="w-3 h-3" /> Sentiment Analysis
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">{result.sentimentSignals}</p>
+                </div>
+              )}
+              {result.riskAssessment && (
+                <div className="bg-white/[0.02] border border-red-500/20 rounded-lg p-3">
+                  <div className="text-[10px] text-red-400 tracking-wider uppercase mb-1.5 flex items-center gap-1.5" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    <Shield className="w-3 h-3" /> Risk Assessment
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">{result.riskAssessment}</p>
+                </div>
+              )}
+            </div>
 
             {/* Strategy + Tier */}
             <div className="flex items-center gap-2 mb-4">
@@ -516,6 +570,7 @@ export default function TradingDashboard() {
   >("overview");
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const [tradeToast, setTradeToast] = useState<TradeResult | null>(null);
 
   const handleTradeExecuted = useCallback((result: TradeResult) => {
     // Persist trade to localStorage so it survives serverless resets
@@ -552,9 +607,12 @@ export default function TradingDashboard() {
         JSON.stringify(stored.slice(0, 100))
       );
     } catch { /* localStorage may not be available */ }
-    // Switch to activity tab and force refresh
+    // Show persistent toast + switch to activity tab
+    setTradeToast(result);
     setActiveTab("activity");
     setActivityRefreshKey((k) => k + 1);
+    // Dismiss toast after 12s
+    setTimeout(() => setTradeToast(null), 12000);
   }, []);
 
   useEffect(() => {
@@ -713,6 +771,60 @@ export default function TradingDashboard() {
           </div>
         </div>
       </header>
+
+      {/* ─── Trade Execution Toast ───────────────────────── */}
+      <AnimatePresence>
+        {tradeToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            transition={{ duration: 0.25 }}
+            className="fixed top-20 right-6 z-40 w-80"
+            style={{
+              background: "linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(10,10,15,0.98) 100%)",
+              border: "1px solid rgba(16,185,129,0.3)",
+              borderRadius: "12px",
+              backdropFilter: "blur(20px)",
+            }}
+          >
+            <div className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <span className="text-sm font-semibold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
+                  {tradeToast.side} {tradeToast.symbol} — Filled
+                </span>
+                <button onClick={() => setTradeToast(null)} className="ml-auto text-zinc-600 hover:text-zinc-400">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 mb-2 text-[10px]" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                <div className="bg-white/[0.04] rounded px-2 py-1">
+                  <div className="text-zinc-600">Price</div>
+                  <div className="text-zinc-200">{tradeToast.executionPrice?.toFixed(4)}</div>
+                </div>
+                <div className="bg-white/[0.04] rounded px-2 py-1">
+                  <div className="text-zinc-600">Conf.</div>
+                  <div className="text-amber-400">{tradeToast.confidence}%</div>
+                </div>
+                <div className="bg-white/[0.04] rounded px-2 py-1">
+                  <div className="text-zinc-600">Tier</div>
+                  <div className="text-emerald-400">{tradeToast.tier}</div>
+                </div>
+              </div>
+              {tradeToast.reasoning && (
+                <p className="text-[10px] text-zinc-400 leading-relaxed line-clamp-2">
+                  {tradeToast.reasoning}
+                </p>
+              )}
+              <p className="text-[10px] text-indigo-400 mt-2 flex items-center gap-1">
+                <Activity className="w-2.5 h-2.5" />
+                Full log visible in Activity tab below ↓
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ─── Content ────────────────────────────────────────── */}
       <main className="relative z-10 max-w-[1600px] mx-auto px-6 py-6">
