@@ -24,6 +24,7 @@ import {
   Clock,
   Send,
   Brain,
+  Unplug,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -76,15 +77,14 @@ const DEFAULT_BROKERS: Broker[] = [
   },
   {
     id: "coinbase",
-    name: "Coinbase Pro",
+    name: "Coinbase Advanced Trade",
     category: "crypto",
-    description: "Advanced crypto trading platform",
+    description: "Coinbase Advanced Trade API (formerly Coinbase Pro)",
     icon: "coins",
     status: "disconnected",
     requiredCredentials: [
-      { key: "api_key", label: "API Key", type: "text" },
+      { key: "api_key", label: "API Key Name", type: "text" },
       { key: "api_secret", label: "API Secret", type: "password" },
-      { key: "passphrase", label: "Passphrase", type: "password" },
     ],
   },
   {
@@ -220,6 +220,7 @@ export default function TradingSettings() {
     error?: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [showLiveWarning, setShowLiveWarning] = useState(false);
   const [notifications, setNotifications] = useState({
     telegramBotToken: "",
@@ -238,8 +239,8 @@ export default function TradingSettings() {
     };
   }, []);
 
-  // Load brokers — merge API data with localStorage (localStorage wins for connection status)
-  useEffect(() => {
+  // Load brokers — fetch from server with revalidation (server is source of truth)
+  const fetchBrokers = useCallback((revalidate = false) => {
     const categoryToIcon: Record<string, Broker["icon"]> = {
       crypto: "coins",
       stocks: "building",
@@ -248,14 +249,11 @@ export default function TradingSettings() {
       all: "monitor",
     };
 
-    // Read persisted connections from localStorage
-    let savedConnections: Record<string, string> = {};
-    try {
-      const raw = localStorage.getItem("aifred_broker_connections");
-      if (raw) savedConnections = JSON.parse(raw);
-    } catch { /* ignore */ }
+    const url = revalidate
+      ? "/api/trading/brokers?revalidate=true"
+      : "/api/trading/brokers";
 
-    fetch("/api/trading/brokers")
+    fetch(url)
       .then((r) => r.json())
       .then((data) => {
         if (data && Array.isArray(data.brokers)) {
@@ -270,29 +268,37 @@ export default function TradingSettings() {
               ) as Broker["category"],
               description: b.description as string,
               icon: categoryToIcon[(b.category as string) || ""] || "monitor",
-              // localStorage status takes precedence (survives page refresh)
-              status: (savedConnections[b.id as string] as Broker["status"]) ||
-                (b.status as Broker["status"]) || "disconnected",
+              // Server status is the source of truth
+              status: (b.status as Broker["status"]) || "disconnected",
               comingSoon: (b.comingSoon as boolean) || false,
               requiredCredentials:
                 (b.requiredCredentials as Broker["requiredCredentials"]) || [],
             })
           );
           setBrokers(mapped);
+
+          // Sync localStorage with server state
+          try {
+            const connections: Record<string, string> = {};
+            mapped.forEach((b) => {
+              if (b.status === "connected") connections[b.id] = "connected";
+            });
+            localStorage.setItem(
+              "aifred_broker_connections",
+              JSON.stringify(connections),
+            );
+          } catch { /* ignore */ }
         }
       })
       .catch(() => {
-        // Use defaults but still apply localStorage connections
-        if (Object.keys(savedConnections).length > 0) {
-          setBrokers((prev) =>
-            prev.map((b) => ({
-              ...b,
-              status: (savedConnections[b.id] as Broker["status"]) || b.status,
-            }))
-          );
-        }
+        // Keep defaults on network error
       });
   }, []);
+
+  useEffect(() => {
+    // On mount: fetch with revalidation to verify stored credentials are still valid
+    fetchBrokers(true);
+  }, [fetchBrokers]);
 
   // Load controls — localStorage wins for persistence across refreshes
   useEffect(() => {
@@ -396,7 +402,7 @@ export default function TradingSettings() {
             b.id === selectedBroker.id ? { ...b, status: "connected" as const } : b
           )
         );
-        // Persist to localStorage so connection survives page refresh
+        // Sync localStorage with new connection
         try {
           const raw = localStorage.getItem("aifred_broker_connections");
           const saved: Record<string, string> = raw ? JSON.parse(raw) : {};
@@ -413,6 +419,42 @@ export default function TradingSettings() {
       setSaving(false);
     }
   }, [selectedBroker, credentials]);
+
+  const handleDisconnect = useCallback(
+    async (brokerId: string) => {
+      setDisconnecting(brokerId);
+      try {
+        const res = await fetch(
+          `/api/trading/brokers?brokerId=${encodeURIComponent(brokerId)}`,
+          { method: "DELETE" },
+        );
+        const data = await res.json();
+        if (data.success) {
+          // Update local broker status
+          setBrokers((prev) =>
+            prev.map((b) =>
+              b.id === brokerId ? { ...b, status: "disconnected" as const } : b,
+            ),
+          );
+          // Clear from localStorage
+          try {
+            const raw = localStorage.getItem("aifred_broker_connections");
+            const saved: Record<string, string> = raw ? JSON.parse(raw) : {};
+            delete saved[brokerId];
+            localStorage.setItem(
+              "aifred_broker_connections",
+              JSON.stringify(saved),
+            );
+          } catch { /* ignore */ }
+        }
+      } catch {
+        // Silently handle
+      } finally {
+        setDisconnecting(null);
+      }
+    },
+    [],
+  );
 
   const updateControls = useCallback(
     async (updates: Partial<TradingControls>) => {
@@ -597,6 +639,8 @@ export default function TradingSettings() {
                 setCredentials({});
                 setTestResult(null);
               }}
+              onDisconnect={() => handleDisconnect(broker.id)}
+              isDisconnecting={disconnecting === broker.id}
               delay={i * 0.04}
             />
           ))}
@@ -1039,10 +1083,14 @@ function SectionHeader({
 function BrokerCard({
   broker,
   onConnect,
+  onDisconnect,
+  isDisconnecting,
   delay,
 }: {
   broker: Broker;
   onConnect: () => void;
+  onDisconnect: () => void;
+  isDisconnecting: boolean;
   delay: number;
 }) {
   const statusColor =
@@ -1123,17 +1171,34 @@ function BrokerCard({
         </div>
 
         {!broker.comingSoon && (
-          <button
-            onClick={onConnect}
-            className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-all ${
-              broker.status === "connected"
-                ? "text-zinc-400 bg-white/[0.04] hover:bg-white/[0.08]"
-                : "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20"
-            }`}
-            style={{ fontFamily: "JetBrains Mono, monospace" }}
-          >
-            {broker.status === "connected" ? "CONFIGURE" : "CONNECT"}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {broker.status === "connected" && (
+              <button
+                onClick={onDisconnect}
+                disabled={isDisconnecting}
+                className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-all text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}
+              >
+                {isDisconnecting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Unplug className="w-3 h-3" />
+                )}
+                {isDisconnecting ? "..." : "DISCONNECT"}
+              </button>
+            )}
+            <button
+              onClick={onConnect}
+              className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-all ${
+                broker.status === "connected"
+                  ? "text-zinc-400 bg-white/[0.04] hover:bg-white/[0.08]"
+                  : "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20"
+              }`}
+              style={{ fontFamily: "JetBrains Mono, monospace" }}
+            >
+              {broker.status === "connected" ? "CONFIGURE" : "CONNECT"}
+            </button>
+          </div>
         )}
       </div>
     </motion.div>

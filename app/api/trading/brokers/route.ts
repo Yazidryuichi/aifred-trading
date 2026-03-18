@@ -80,17 +80,16 @@ const BROKER_REGISTRY: BrokerDefinition[] = [
   },
   {
     id: "coinbase",
-    name: "Coinbase",
+    name: "Coinbase Advanced Trade",
     category: "crypto",
-    description: "Leading US-regulated crypto exchange",
+    description: "Coinbase Advanced Trade API (formerly Coinbase Pro)",
     supportedAssets: [
       "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOGE/USD",
       "ADA/USD", "DOT/USD", "MATIC/USD", "LINK/USD", "UNI/USD",
     ],
     requiredCredentials: [
-      { key: "api_key", label: "API Key", type: "text" },
+      { key: "api_key", label: "API Key Name", type: "text" },
       { key: "api_secret", label: "API Secret", type: "password" },
-      { key: "passphrase", label: "Passphrase", type: "password" },
     ],
   },
   {
@@ -249,12 +248,108 @@ function writeSecrets(data: Record<string, Record<string, string>>) {
 }
 
 // ---------------------------------------------------------------------------
+// Revalidation helper — test stored credentials for a connected broker
+// ---------------------------------------------------------------------------
+
+async function revalidateBroker(
+  brokerId: string,
+  secrets: Record<string, Record<string, string>>,
+): Promise<boolean> {
+  const creds = secrets[brokerId];
+  if (!creds) return false;
+
+  try {
+    // Call the internal test endpoint logic inline to avoid HTTP round-trip
+    let ccxt: any;
+    try {
+      ccxt = require("ccxt");
+    } catch {
+      ccxt = null;
+    }
+
+    const EXCHANGE_MAP: Record<string, string> = {
+      binance: "binance",
+      coinbase: "coinbasepro",
+      kraken: "kraken",
+      bybit: "bybit",
+    };
+
+    const exchangeName = EXCHANGE_MAP[brokerId];
+
+    if (ccxt && exchangeName && ccxt[exchangeName]) {
+      const ExchangeClass = ccxt[exchangeName];
+      const exchange = new ExchangeClass({
+        apiKey: creds.api_key || creds.apiKey,
+        secret: creds.api_secret || creds.secret,
+        password: creds.passphrase || creds.password,
+        enableRateLimit: true,
+        timeout: 10000,
+      });
+      await exchange.fetchBalance();
+      return true;
+    }
+
+    // For non-ccxt brokers, check that credentials exist
+    const filledFields = Object.values(creds).filter(
+      (v) => typeof v === "string" && v.trim().length > 0,
+    );
+    return filledFields.length >= 2;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/trading/brokers — list brokers with connection status
 // ---------------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const url = new URL(request.url);
+    const revalidate = url.searchParams.get("revalidate") === "true";
+
     const connections = readConnections();
+
+    // If revalidate is requested, re-test connected brokers
+    if (revalidate) {
+      const secrets = readSecrets();
+      let changed = false;
+
+      for (const [id, conn] of Object.entries(connections)) {
+        if (conn.connected) {
+          const isValid = await revalidateBroker(id, secrets);
+          if (!isValid) {
+            connections[id] = {
+              ...conn,
+              connected: false,
+              status: "disconnected",
+              lastChecked: new Date().toISOString(),
+            };
+            // Remove stale credentials
+            delete secrets[id];
+            changed = true;
+
+            appendActivity({
+              type: "broker_revalidation_failed",
+              severity: "warning",
+              title: `Broker Disconnected: ${id}`,
+              message: `${id} credentials are no longer valid — connection removed.`,
+              details: { broker: id },
+            });
+          } else {
+            connections[id] = {
+              ...conn,
+              lastChecked: new Date().toISOString(),
+            };
+          }
+        }
+      }
+
+      if (changed) {
+        writeConnections(connections);
+        writeSecrets(secrets);
+      }
+    }
 
     const brokers = BROKER_REGISTRY.map((broker) => {
       const conn = connections[broker.id];
@@ -365,6 +460,65 @@ export async function POST(request: NextRequest) {
     console.error("Brokers POST error:", error);
     return NextResponse.json(
       { success: false, message: "Failed to save broker credentials" },
+      { status: 500 },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/trading/brokers?brokerId=xxx — disconnect and remove credentials
+// ---------------------------------------------------------------------------
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const url = new URL(request.url);
+    const brokerId = url.searchParams.get("brokerId");
+
+    if (!brokerId) {
+      return NextResponse.json(
+        { error: "brokerId is required" },
+        { status: 400 },
+      );
+    }
+
+    // Remove credentials
+    const secrets = readSecrets();
+    delete secrets[brokerId];
+    writeSecrets(secrets);
+
+    // Update connection status
+    const connections = readConnections();
+    if (connections[brokerId]) {
+      connections[brokerId] = {
+        ...connections[brokerId],
+        connected: false,
+        status: "disconnected",
+        lastChecked: new Date().toISOString(),
+      };
+      writeConnections(connections);
+    }
+
+    // Find broker name for activity log
+    const broker = BROKER_REGISTRY.find((b) => b.id === brokerId);
+    const brokerName = broker?.name ?? brokerId;
+
+    // Log activity
+    appendActivity({
+      type: "broker_disconnected",
+      severity: "warning",
+      title: `Broker Disconnected: ${brokerName}`,
+      message: `${brokerName} disconnected — API credentials removed.`,
+      details: { broker: brokerId },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `${brokerName} disconnected`,
+    });
+  } catch (error) {
+    console.error("Brokers DELETE error:", error);
+    return NextResponse.json(
+      { error: "Failed to disconnect broker" },
       { status: 500 },
     );
   }
