@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { loadStats, selectStrategy, computeConfidence, recordTradeOutcome } from "@/lib/strategy-learning";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +42,40 @@ function appendActivity(entry: Record<string, unknown>) {
   }
 }
 
-// Simulated market prices for paper trading
+// Live price fetch with 30s cache
+const livePriceCache = new Map<string, { price: number; ts: number }>();
+
+const CRYPTO_BINANCE: Record<string, string> = {
+  "BTC/USDT": "BTCUSDT", "ETH/USDT": "ETHUSDT", "SOL/USDT": "SOLUSDT",
+  "BNB/USDT": "BNBUSDT", "XRP/USDT": "XRPUSDT", "ADA/USDT": "ADAUSDT",
+  "DOGE/USDT": "DOGEUSDT", "AVAX/USDT": "AVAXUSDT", "DOT/USDT": "DOTUSDT",
+  "MATIC/USDT": "MATICUSDT",
+};
+
+async function getLivePrice(symbol: string): Promise<number | null> {
+  const cached = livePriceCache.get(symbol);
+  if (cached && Date.now() - cached.ts < 30_000) return cached.price;
+
+  const binSym = CRYPTO_BINANCE[symbol];
+  if (!binSym) return null; // Not a crypto symbol, use mock
+
+  try {
+    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${binSym}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const price = parseFloat(data.price);
+      if (price > 0) {
+        livePriceCache.set(symbol, { price, ts: Date.now() });
+        return price;
+      }
+    }
+  } catch { /* fallback */ }
+  return null;
+}
+
+// Fallback market prices for paper trading
 const MOCK_PRICES: Record<string, number> = {
   "BTC/USDT": 67245.5,
   "ETH/USDT": 3521.8,
@@ -105,8 +139,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Execution price with slight slippage simulation
-    const basePrice = price || MOCK_PRICES[symbol] || 100.0;
+    // Fetch live price for crypto, fall back to mock
+    const livePrice = await getLivePrice(symbol);
+    const basePrice = price || livePrice || MOCK_PRICES[symbol] || 100.0;
+    const priceSource = livePrice ? "live" : "mock";
     const slippage = basePrice * (0.0001 + Math.random() * 0.0005);
     const executionPrice = orderType === "market"
       ? side === "LONG" ? basePrice + slippage : basePrice - slippage
@@ -121,16 +157,10 @@ export async function POST(request: NextRequest) {
       : executionPrice * 0.975;
     const riskReward = Math.abs(takeProfit - executionPrice) / Math.abs(executionPrice - stopLoss);
 
-    // Strategy selection
-    const strategies = [
-      "ICT Confluence",
-      "Mean Reversion",
-      "Momentum Breakout",
-      "LSTM Ensemble",
-      "Sentiment Analysis",
-    ];
-    const strategy = strategies[Math.floor(Math.random() * strategies.length)];
-    const confidence = 70 + Math.floor(Math.random() * 22);
+    // Strategy selection (learning-based: weighted by historical win rate)
+    const strategyStats = loadStats();
+    const strategy = selectStrategy(strategyStats);
+    const confidence = computeConfidence(strategyStats, strategy);
 
     const orderId = `ord_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
@@ -206,6 +236,16 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Simulate trade outcome for learning (paper trading)
+    // In paper mode, generate outcome probabilistically based on confidence
+    const outcomeRoll = Math.random() * 100;
+    const isSimulatedWin = outcomeRoll < confidence; // Higher confidence = higher chance of win
+    const simulatedPnl = isSimulatedWin
+      ? quantity * executionPrice * (0.005 + Math.random() * 0.02) // Win: +0.5% to +2.5%
+      : -(quantity * executionPrice * (0.003 + Math.random() * 0.012)); // Loss: -0.3% to -1.5%
+
+    recordTradeOutcome(strategyStats, strategy, confidence, simulatedPnl);
+
     return NextResponse.json({
       success: true,
       orderId,
@@ -225,9 +265,10 @@ export async function POST(request: NextRequest) {
       technicalSignals,
       sentimentSignals,
       riskAssessment,
+      priceSource,
       status: "filled",
       timestamp: new Date().toISOString(),
-      message: `${side} ${quantity} ${symbol} @ ${executionPrice.toFixed(4)} — Order filled`,
+      message: `${side} ${quantity} ${symbol} @ ${executionPrice.toFixed(4)} — Order filled (${priceSource} price)`,
     });
   } catch (error) {
     console.error("Trade execution error:", error);

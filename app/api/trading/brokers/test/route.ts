@@ -2,29 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// ---------------------------------------------------------------------------
-// POST /api/trading/brokers/test — test a broker connection
-//
-// NOTE: This currently returns simulated/mock results. Once the Python broker
-// adapters are wired to the Next.js API layer (e.g. via a FastAPI sidecar or
-// direct subprocess calls), replace the mock logic below with real connection
-// tests against each exchange's REST API.
-// ---------------------------------------------------------------------------
-
-interface TestResult {
-  success: boolean;
-  latency_ms: number;
-  account_id: string;
-  balance: Record<string, number>;
-  message: string;
+// Use dynamic require to avoid Next.js bundling issues with ccxt
+let ccxt: any;
+try {
+  ccxt = require("ccxt");
+} catch {
+  ccxt = null;
 }
 
-// Mock balance data per broker for realistic simulation
+// Map broker IDs to ccxt exchange class names (lowercase)
+const EXCHANGE_MAP: Record<string, string> = {
+  binance: "binance",
+  coinbase: "coinbasepro",
+  kraken: "kraken",
+  bybit: "bybit",
+};
+
+// Fallback balances for brokers not supported by ccxt
 const MOCK_BALANCES: Record<string, Record<string, number>> = {
-  binance: { USDT: 10250.42, BTC: 0.125, ETH: 2.5 },
-  coinbase: { USD: 8340.0, BTC: 0.08, ETH: 1.2 },
-  kraken: { USD: 5120.75, BTC: 0.05, ETH: 0.8 },
-  bybit: { USDT: 15000.0, BTC: 0.2, ETH: 3.0 },
   alpaca: { USD: 25000.0, AAPL: 10, MSFT: 5 },
   oanda: { USD: 50000.0, EUR: 5000.0 },
 };
@@ -39,56 +34,125 @@ export async function POST(request: NextRequest) {
 
     if (!brokerId || !credentials) {
       return NextResponse.json(
-        { success: false, latency_ms: 0, account_id: "", balance: {}, message: "brokerId and credentials are required" },
+        { success: false, error: "Missing brokerId or credentials" },
         { status: 400 },
       );
     }
 
-    // Simulate network latency for the connection test (50-300ms)
-    const startTime = Date.now();
-    const simulatedLatency = Math.floor(Math.random() * 250) + 50;
-    await new Promise((resolve) => setTimeout(resolve, simulatedLatency));
-    const latency = Date.now() - startTime;
+    // Check if ccxt is available and broker is supported
+    const exchangeName = EXCHANGE_MAP[brokerId];
 
-    // Simulate basic credential validation — reject obviously empty keys
-    const hasEmptyRequired = Object.values(credentials).some(
-      (v) => typeof v === "string" && v.trim() === "",
-    );
+    if (ccxt && exchangeName && ccxt[exchangeName]) {
+      // ── REAL validation via ccxt ──────────────────────────────────────
+      const start = Date.now();
 
-    if (hasEmptyRequired) {
-      const result: TestResult = {
-        success: false,
-        latency_ms: latency,
-        account_id: "",
-        balance: {},
-        message: "Connection failed: one or more credentials are empty",
-      };
-      return NextResponse.json(result);
+      try {
+        const ExchangeClass = ccxt[exchangeName];
+        const exchange = new ExchangeClass({
+          apiKey: credentials.api_key || credentials.apiKey,
+          secret: credentials.api_secret || credentials.secret,
+          password: credentials.passphrase || credentials.password, // Coinbase Pro needs this
+          enableRateLimit: true,
+          timeout: 10000,
+        });
+
+        const balance = await exchange.fetchBalance();
+        const latency = Date.now() - start;
+
+        // Extract non-zero balances
+        const nonZero: Record<string, number> = {};
+        if (balance.total) {
+          for (const [currency, amount] of Object.entries(balance.total)) {
+            if (typeof amount === "number" && amount > 0) {
+              nonZero[currency] = amount;
+            }
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          latency_ms: latency,
+          account_id: `${brokerId}_${Date.now().toString(36)}`,
+          balance: Object.keys(nonZero).length > 0 ? nonZero : { USD: 0 },
+          message: `Connected to ${brokerId} — ${Object.keys(nonZero).length} assets found`,
+          source: "live",
+        });
+      } catch (err: any) {
+        const latency = Date.now() - start;
+
+        // Classify ccxt errors
+        const errorName = err?.constructor?.name || "";
+        let userMessage = "Connection test failed";
+        let status = 500;
+
+        if (
+          errorName === "AuthenticationError" ||
+          errorName === "InvalidCredentials"
+        ) {
+          userMessage =
+            "Invalid API credentials — check your API key and secret";
+          status = 401;
+        } else if (errorName === "PermissionDenied") {
+          userMessage =
+            "API key lacks required permissions (need read access)";
+          status = 403;
+        } else if (
+          errorName === "DDoSProtection" ||
+          errorName === "RateLimitExceeded"
+        ) {
+          userMessage = "Exchange rate limited — try again in 30 seconds";
+          status = 429;
+        } else if (
+          errorName === "NetworkError" ||
+          errorName === "RequestTimeout"
+        ) {
+          userMessage = "Network timeout — check your connection";
+          status = 504;
+        } else if (errorName === "ExchangeNotAvailable") {
+          userMessage = "Exchange temporarily unavailable";
+          status = 503;
+        }
+
+        return NextResponse.json(
+          {
+            success: false,
+            latency_ms: latency,
+            error: userMessage,
+            details: err?.message?.slice(0, 200),
+            source: "live",
+          },
+          { status },
+        );
+      }
     }
 
-    // Return mock success
-    const balance = MOCK_BALANCES[brokerId] ?? { USD: 0 };
-    const accountId = `${brokerId}_test_${Date.now().toString(36)}`;
+    // ── Fallback: mock validation for unsupported brokers (alpaca, oanda) ──
+    const mockDelay = 50 + Math.floor(Math.random() * 200);
+    await new Promise((r) => setTimeout(r, mockDelay));
 
-    const result: TestResult = {
+    // Basic credential validation
+    const requiredFields = Object.values(credentials).filter(
+      (v) => typeof v === "string" && v.trim().length > 0,
+    );
+    if (requiredFields.length < 2) {
+      return NextResponse.json(
+        { success: false, error: "Missing required credentials" },
+        { status: 400 },
+      );
+    }
+
+    return NextResponse.json({
       success: true,
-      latency_ms: latency,
-      account_id: accountId,
-      balance,
-      message: `Successfully connected to ${brokerId}. API credentials are valid.`,
-    };
-
-    return NextResponse.json(result);
+      latency_ms: mockDelay,
+      account_id: `${brokerId}_${Date.now().toString(36)}`,
+      balance: MOCK_BALANCES[brokerId] ?? { USD: 0 },
+      message: `Connected to ${brokerId} (simulated — real API integration coming soon)`,
+      source: "mock",
+    });
   } catch (error) {
     console.error("Broker test error:", error);
     return NextResponse.json(
-      {
-        success: false,
-        latency_ms: 0,
-        account_id: "",
-        balance: {},
-        message: "Connection test failed due to an internal error",
-      },
+      { success: false, error: "Unexpected error" },
       { status: 500 },
     );
   }
