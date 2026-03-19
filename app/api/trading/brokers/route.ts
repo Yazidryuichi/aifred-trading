@@ -269,7 +269,7 @@ async function revalidateBroker(
 
     const EXCHANGE_MAP: Record<string, string> = {
       binance: "binance",
-      coinbase: "coinbasepro",
+      coinbase: "coinbase",
       kraken: "kraken",
       bybit: "bybit",
     };

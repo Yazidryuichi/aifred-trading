@@ -126,8 +126,7 @@ class CCXTAdapter(BrokerAdapter):
     def _creds_for_exchange(exchange_id: str) -> List[str]:
         creds_map = {
             "binance": ["api_key", "api_secret"],
-            "coinbase": ["api_key", "api_secret", "passphrase"],
-            "coinbasepro": ["api_key", "api_secret", "passphrase"],
+            "coinbase": ["api_key", "api_secret"],
             "kraken": ["api_key", "api_secret"],
             "bybit": ["api_key", "api_secret"],
         }
@@ -138,7 +137,7 @@ class CCXTAdapter(BrokerAdapter):
 
         exchange_map = {
             "binance": "binance",
-            "coinbase": "coinbasepro",
+            "coinbase": "coinbase",
             "kraken": "kraken",
             "bybit": "bybit",
         }

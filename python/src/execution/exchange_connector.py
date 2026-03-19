@@ -19,7 +19,7 @@ class ExchangeConnector:
     # Mapping from exchange name to ccxt class name
     EXCHANGE_MAP = {
         "binance": "binance",
-        "coinbase": "coinbasepro",
+        "coinbase": "coinbase",
         "kraken": "kraken",
         "bybit": "bybit",
         "alpaca": "alpaca",

@@ -13,7 +13,7 @@ try {
 // Map broker IDs to ccxt exchange class names (lowercase)
 const EXCHANGE_MAP: Record<string, string> = {
   binance: "binance",
-  coinbase: "coinbasepro",
+  coinbase: "coinbase",
   kraken: "kraken",
   bybit: "bybit",
 };
