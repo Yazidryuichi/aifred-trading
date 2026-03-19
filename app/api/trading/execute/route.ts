@@ -504,8 +504,8 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
     // Step 2: Regime-based trade gating
     // -----------------------------------------------------------------------
-    const bearishRegimes = ["bear", "crash", "choppy"];
-    const cautionRegimes = ["sideways", "neutral"];
+    const bearishRegimes = ["bear", "crash"];
+    const cautionRegimes = ["sideways", "neutral", "choppy"];
     const regimeCurrent = regimeData.current;
     let tradeBlocked = false;
     let regimeWarning = "";

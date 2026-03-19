@@ -332,6 +332,7 @@ function ExecuteTradeModal({
           mode: tradeMode,
           brokerId: tradeMode === "live" ? selectedBroker : undefined,
           credentials: brokerCredentials || undefined,
+          forceExecution: true,
         }),
       });
       const data: TradeResult = await res.json();
