@@ -2349,6 +2349,28 @@ function ActivityTab() {
               .filter((trade) => {
                 if (filterMode === "all") return true;
                 return getEntryMode(trade) === filterMode;
+              }).length === 0 && filterMode !== "all" ? (
+              <div className="text-center py-6">
+                <p className="text-sm text-zinc-500 mb-1">
+                  {filterMode === "live" ? "No live trades yet" : "No simulation trades yet"}
+                </p>
+                <p className="text-xs text-zinc-600">
+                  {filterMode === "live"
+                    ? "Connect a broker in Settings and execute in Live mode to see trades here"
+                    : "Execute a trade in Simulate mode to see trades here"}
+                </p>
+                <button
+                  onClick={() => setFilterMode("all")}
+                  className="mt-3 px-4 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] text-zinc-400 hover:text-white transition-all"
+                >
+                  Show All Trades
+                </button>
+              </div>
+            ) : null}
+            {userTrades
+              .filter((trade) => {
+                if (filterMode === "all") return true;
+                return getEntryMode(trade) === filterMode;
               })
               .map((trade) => {
               const isExpanded = expandedId === trade.id;
