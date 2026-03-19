@@ -1,0 +1,221 @@
+name: AIFred Autonomous Trading
+
+on:
+  schedule:
+    # Run every 30 minutes during market hours (24/7 for crypto)
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Trading mode'
+        required: true
+        default: 'paper'
+        type: choice
+        options:
+          - paper
+          - live
+      auto_execute:
+        description: 'Auto-execute trades'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      assets:
+        description: 'Assets to scan (comma-separated)'
+        required: false
+        default: 'BTC/USDT,ETH/USDT,SOL/USDT'
+
+env:
+  APP_URL: https://aifred-trading.vercel.app
+
+jobs:
+  autoscan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Run Autonomous Scan
+        id: scan
+        run: |
+          MODE="${{ github.event.inputs.mode || 'paper' }}"
+          AUTO_EXEC="${{ github.event.inputs.auto_execute || 'true' }}"
+          ASSETS="${{ github.event.inputs.assets || 'BTC/USDT,ETH/USDT,SOL/USDT' }}"
+
+          # Convert comma-separated assets to JSON array
+          ASSETS_JSON=$(echo "$ASSETS" | jq -R 'split(",")')
+
+          echo "Starting AIFred Autonomous Scan"
+          echo "Mode: $MODE | Auto-Execute: $AUTO_EXEC"
+          echo "Assets: $ASSETS"
+          echo "Time: $(date -u)"
+
+          # Build request body
+          BODY=$(jq -n \
+            --argjson assets "$ASSETS_JSON" \
+            --arg mode "$MODE" \
+            --argjson autoExecute "$AUTO_EXEC" \
+            --argjson maxPositionSize 500 \
+            --argjson maxConcurrentPositions 3 \
+            --argjson maxDailyLoss 1000 \
+            '{
+              assets: $assets,
+              mode: $mode,
+              autoExecute: $autoExecute,
+              riskLimits: {
+                maxPositionSize: $maxPositionSize,
+                maxConcurrentPositions: $maxConcurrentPositions,
+                maxDailyLoss: $maxDailyLoss,
+                cooldownHours: 48,
+                requiredConfirmations: 7
+              }
+            }')
+
+          # If live mode with broker credentials
+          if [ "$MODE" = "live" ] && [ -n "${{ secrets.BROKER_ID }}" ]; then
+            BODY=$(echo "$BODY" | jq \
+              --arg brokerId "${{ secrets.BROKER_ID }}" \
+              --arg apiKey "${{ secrets.BROKER_API_KEY }}" \
+              --arg apiSecret "${{ secrets.BROKER_API_SECRET }}" \
+              '. + {
+                brokerId: $brokerId,
+                credentials: {
+                  api_key: $apiKey,
+                  api_secret: $apiSecret
+                }
+              }')
+          fi
+
+          # Call the autoscan endpoint
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ env.APP_URL }}/api/trading/autoscan" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            --max-time 120)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY_RESPONSE=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Scan failed with HTTP $HTTP_CODE"
+            echo "$BODY_RESPONSE" | jq . 2>/dev/null || echo "$BODY_RESPONSE"
+            exit 1
+          fi
+
+          # Parse and display results
+          echo "$BODY_RESPONSE" | jq .
+
+          # Extract key metrics for summary
+          SIGNALS=$(echo "$BODY_RESPONSE" | jq '.signals | length // 0')
+          EXECUTIONS=$(echo "$BODY_RESPONSE" | jq '.executions | length // 0')
+          POSITIONS=$(echo "$BODY_RESPONSE" | jq '.openPositions | length // 0')
+
+          echo ""
+          echo "Scan Summary:"
+          echo "  Signals: $SIGNALS"
+          echo "  Executions: $EXECUTIONS"
+          echo "  Open Positions: $POSITIONS"
+
+          # Set outputs for downstream steps
+          echo "signals=$SIGNALS" >> $GITHUB_OUTPUT
+          echo "executions=$EXECUTIONS" >> $GITHUB_OUTPUT
+          echo "positions=$POSITIONS" >> $GITHUB_OUTPUT
+
+          # Store full response in a file (safer than GITHUB_OUTPUT for large JSON)
+          echo "$BODY_RESPONSE" > /tmp/scan-response.json
+
+      - name: Notify on Trade Execution
+        if: steps.scan.outputs.executions != '0' && steps.scan.outputs.executions != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          EXECUTIONS="${{ steps.scan.outputs.executions }}"
+          MODE="${{ github.event.inputs.mode || 'paper' }}"
+
+          # Build a summary from the response
+          TRADE_SUMMARY=""
+          if [ -f /tmp/scan-response.json ]; then
+            TRADE_SUMMARY=$(jq -r '
+              (.executions // [])[] |
+              "  \(.asset // "N/A"): \(.side // "N/A") @ $\(.price // "N/A")"
+            ' /tmp/scan-response.json 2>/dev/null || echo "  (details unavailable)")
+          fi
+
+          MSG="AIFred Trade Alert
+          Mode: $MODE
+          Trades Executed: $EXECUTIONS
+          $TRADE_SUMMARY"
+
+          echo "$MSG"
+
+          # Send Telegram notification if configured
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -n --arg chat "$TELEGRAM_CHAT_ID" --arg text "$MSG" \
+                '{chat_id: $chat, text: $text}')" > /dev/null
+            echo "Telegram notification sent."
+          else
+            echo "Telegram not configured, skipping notification."
+          fi
+
+      - name: Generate Report
+        if: always()
+        run: |
+          echo "## AIFred Trading Scan Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Time** | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Mode** | ${{ github.event.inputs.mode || 'paper' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Signals Generated** | ${{ steps.scan.outputs.signals || '0' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trades Executed** | ${{ steps.scan.outputs.executions || '0' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Open Positions** | ${{ steps.scan.outputs.positions || '0' }} |" >> $GITHUB_STEP_SUMMARY
+
+          # Include detailed response if available
+          if [ -f /tmp/scan-response.json ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>Full API Response</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            jq . /tmp/scan-response.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "(no response)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+# ──────────────────────────────────────────────────────────
+# SETUP GUIDE
+# ──────────────────────────────────────────────────────────
+#
+# 1. REQUIRED SECRETS (set in GitHub repo Settings > Secrets and variables > Actions):
+#
+#    For live trading (optional, paper mode works without these):
+#      BROKER_ID          - Your broker identifier (e.g., "binance", "alpaca")
+#      BROKER_API_KEY     - Broker API key
+#      BROKER_API_SECRET  - Broker API secret
+#
+#    For Telegram notifications (optional):
+#      TELEGRAM_BOT_TOKEN - Bot token from @BotFather
+#      TELEGRAM_CHAT_ID   - Your chat or group ID
+#
+# 2. MANUAL TRIGGER:
+#    Go to Actions tab > "AIFred Autonomous Trading" > "Run workflow"
+#    Select mode (paper/live), auto-execute (true/false), and assets.
+#
+# 3. SWITCHING TO LIVE MODE:
+#    - First, add BROKER_ID, BROKER_API_KEY, BROKER_API_SECRET secrets
+#    - Then trigger manually with mode = "live"
+#    - Scheduled runs default to paper mode for safety
+#    - To schedule live runs, change the default in workflow_dispatch.inputs.mode
+#
+# 4. ADJUSTING SCHEDULE:
+#    Edit the cron expression above. Current: every 30 minutes.
+#    Examples:
+#      '0 * * * *'       - Every hour
+#      '*/15 * * * *'    - Every 15 minutes
+#      '0 9-17 * * 1-5'  - Hourly during US market hours (weekdays only)
+#

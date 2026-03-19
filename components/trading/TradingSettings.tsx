@@ -25,6 +25,7 @@ import {
   Send,
   Brain,
   Unplug,
+  Bot,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -233,6 +234,21 @@ export default function TradingSettings() {
     telegramChatId: "",
     anthropicApiKey: "",
     newsApiKey: "",
+  });
+
+  // ─── Autonomous Trading State ─────────────────────────────
+  const [autonomousEnabled, setAutonomousEnabled] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [lastScanResult, setLastScanResult] = useState<{
+    timestamp: string;
+    scanResults?: { symbol: string; signal: string; regime: string; regimeConfidence: number }[];
+  } | null>(null);
+  const [riskLimits, setRiskLimits] = useState({
+    maxPositionSize: 500,
+    maxConcurrentPositions: 3,
+    maxDailyLoss: 1000,
+    cooldownHours: 48,
+    requiredConfirmations: 7,
   });
 
   // Inject styles
@@ -514,6 +530,53 @@ export default function TradingSettings() {
     },
     [controls.mode, updateControls]
   );
+
+  // ─── Autonomous Trading: Load saved settings ──────────────
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('aifred_autonomous_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setAutonomousEnabled(parsed.enabled ?? false);
+        if (parsed.riskLimits) {
+          setRiskLimits(parsed.riskLimits);
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // ─── Autonomous Trading: Persist settings ─────────────────
+  useEffect(() => {
+    try {
+      localStorage.setItem('aifred_autonomous_settings', JSON.stringify({
+        enabled: autonomousEnabled,
+        riskLimits,
+      }));
+    } catch { /* ignore */ }
+  }, [autonomousEnabled, riskLimits]);
+
+  // ─── Autonomous Trading: Manual scan handler ──────────────
+  const handleManualScan = useCallback(async () => {
+    setScanning(true);
+    try {
+      const res = await fetch('/api/trading/autoscan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assets: ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
+          mode: 'paper',
+          autoExecute: false,
+          riskLimits,
+        }),
+      });
+      const data = await res.json();
+      setLastScanResult(data);
+    } catch (err) {
+      console.error('Scan failed:', err);
+    } finally {
+      setScanning(false);
+    }
+  }, [riskLimits]);
 
   const groupedAssets = controls.assets.reduce(
     (acc, asset) => {
@@ -815,6 +878,131 @@ export default function TradingSettings() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Section B2: Autonomous Trading */}
+        <SectionHeader
+          icon={<Bot className="w-4 h-4" />}
+          title="Autonomous Trading"
+          subtitle="AI-POWERED AUTONOMOUS TRADE EXECUTION"
+          delay={0.3}
+        />
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+        >
+          <div className="card-glass p-6 rounded-xl border border-zinc-800">
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Bot className="w-5 h-5 text-purple-400" />
+              Autonomous Trading
+            </h3>
+
+            {/* Status Banner */}
+            <div className="p-4 rounded-lg bg-zinc-900/50 border border-zinc-700 mb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {autonomousEnabled ? 'AI Trader Active' : 'AI Trader Inactive'}
+                  </p>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    {autonomousEnabled
+                      ? 'Scanning markets every 30 minutes via GitHub Actions'
+                      : 'Enable to let AIFred trade autonomously 24/7'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setAutonomousEnabled(!autonomousEnabled)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                    autonomousEnabled
+                      ? 'bg-green-500/20 text-green-400 border border-green-500/50'
+                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                  }`}
+                >
+                  {autonomousEnabled ? 'ACTIVE' : 'ACTIVATE'}
+                </button>
+              </div>
+            </div>
+
+            {/* Risk Limits */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="text-xs text-zinc-400 mb-1 block">Max Position Size (USD)</label>
+                <input type="number" value={riskLimits.maxPositionSize}
+                  onChange={e => setRiskLimits({...riskLimits, maxPositionSize: +e.target.value})}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 mb-1 block">Max Concurrent Positions</label>
+                <input type="number" value={riskLimits.maxConcurrentPositions}
+                  onChange={e => setRiskLimits({...riskLimits, maxConcurrentPositions: +e.target.value})}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 mb-1 block">Max Daily Loss (USD)</label>
+                <input type="number" value={riskLimits.maxDailyLoss}
+                  onChange={e => setRiskLimits({...riskLimits, maxDailyLoss: +e.target.value})}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 mb-1 block">Cooldown After Exit (hours)</label>
+                <input type="number" value={riskLimits.cooldownHours}
+                  onChange={e => setRiskLimits({...riskLimits, cooldownHours: +e.target.value})}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm" />
+              </div>
+            </div>
+
+            {/* Required Confirmations Slider */}
+            <div className="mb-4">
+              <label className="text-xs text-zinc-400 mb-1 block">
+                Required Confirmations: {riskLimits.requiredConfirmations}/8
+              </label>
+              <input type="range" min="4" max="8" value={riskLimits.requiredConfirmations}
+                onChange={e => setRiskLimits({...riskLimits, requiredConfirmations: +e.target.value})}
+                className="w-full" />
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span>Aggressive (4)</span>
+                <span>Conservative (8)</span>
+              </div>
+            </div>
+
+            {/* Manual Scan Button */}
+            <button
+              onClick={handleManualScan}
+              disabled={scanning}
+              className="w-full py-3 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-500/50
+                hover:bg-purple-500/30 transition-all text-sm font-semibold disabled:opacity-50"
+            >
+              {scanning ? 'Scanning...' : 'Run Manual Scan Now'}
+            </button>
+
+            {/* Last Scan Results */}
+            {lastScanResult && (
+              <div className="mt-4 p-3 rounded-lg bg-zinc-900/50 border border-zinc-700">
+                <p className="text-xs text-zinc-400 mb-2">Last Scan: {lastScanResult.timestamp}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {lastScanResult.scanResults?.map(r => (
+                    <div key={r.symbol} className="text-center p-2 rounded bg-zinc-800">
+                      <p className="text-xs font-bold text-white">{r.symbol}</p>
+                      <p className={`text-xs ${r.signal === 'ENTER_LONG' ? 'text-green-400' : r.signal === 'EXIT' ? 'text-red-400' : 'text-zinc-400'}`}>
+                        {r.signal}
+                      </p>
+                      <p className="text-[10px] text-zinc-500">{r.regime} ({(r.regimeConfidence * 100).toFixed(0)}%)</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Setup Instructions */}
+            <div className="mt-4 p-3 rounded-lg bg-zinc-900/30 border border-zinc-800">
+              <p className="text-xs text-zinc-400">
+                <span className="text-purple-400 font-semibold">How it works:</span> AIFred scans markets every 30 minutes
+                via GitHub Actions. When regime is bullish and 7/8 confirmations pass, it auto-executes trades through
+                your connected broker. Set your risk limits above.
+              </p>
             </div>
           </div>
         </motion.div>
