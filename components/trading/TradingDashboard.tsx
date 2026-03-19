@@ -707,7 +707,7 @@ function ExecuteTradeModal({
                 Tier {result.tier}
               </span>
               <span className="ml-auto text-[11px] text-zinc-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                via {result.broker}
+                via {typeof result.broker === "object" ? result.broker?.name : result.broker}
               </span>
             </div>
 
