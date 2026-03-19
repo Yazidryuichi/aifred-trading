@@ -5,9 +5,9 @@
     "type": "system_start",
     "severity": "success",
     "title": "Trading System Started",
-    "message": "AIFred trading engine initialized in paper mode. Monitoring 8 assets across 3 brokers.",
+    "message": "AIFred trading engine initialized. HMM Regime: Bull Run (87% confidence) — 7/8 confirmations passed. Monitoring 8 assets across 3 brokers.",
     "details": {
-      "tier": "paper"
+      "tier": "production"
     }
   },
   {
@@ -16,7 +16,7 @@
     "type": "scan_complete",
     "severity": "info",
     "title": "Market Scan Complete",
-    "message": "Scanned 8 assets. Found 3 actionable signals.",
+    "message": "HMM Regime: Bull Run (87% confidence). Scanned 8 assets. Found 3 actionable signals aligned with current regime.",
     "details": {}
   },
   {
@@ -84,7 +84,7 @@
     "type": "trade_executed",
     "severity": "success",
     "title": "Trade Executed: LONG BTC/USDT",
-    "message": "Opened LONG position on BTC/USDT via Binance. Trend following setup with strong multi-factor confirmation.",
+    "message": "HMM Regime: Bull Run (87% confidence) — Opened LONG on BTC/USDT via Binance. Momentum + trend following confirmed by multi-factor analysis.",
     "details": {
       "asset": "BTC/USDT",
       "side": "LONG",

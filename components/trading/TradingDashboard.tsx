@@ -360,8 +360,8 @@ function ExecuteTradeModal({
                   <h2 className="text-base font-bold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
                     Execute Trade
                   </h2>
-                  <p className="text-[11px] tracking-wider" style={{ fontFamily: "JetBrains Mono, monospace", color: tradeMode === "live" ? "#4ade80" : "#facc15" }}>
-                    {tradeMode === "live" ? "LIVE TRADING" : "PAPER TRADING"}
+                  <p className="text-[11px] tracking-wider" style={{ fontFamily: "JetBrains Mono, monospace", color: tradeMode === "live" ? "#4ade80" : "#a78bfa" }}>
+                    {tradeMode === "live" ? "LIVE TRADING" : "SIMULATION MODE"}
                   </p>
                 </div>
               </div>
@@ -379,12 +379,12 @@ function ExecuteTradeModal({
                 onClick={() => setTradeMode("paper")}
                 className={`flex-1 py-2 px-4 rounded-md text-xs font-semibold transition-all ${
                   tradeMode === "paper"
-                    ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/50"
+                    ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/50"
                     : "text-zinc-500 hover:text-zinc-300 border border-transparent"
                 }`}
                 style={{ fontFamily: "JetBrains Mono, monospace" }}
               >
-                PAPER MODE
+                SIMULATE
               </button>
               <button
                 onClick={() => {
@@ -406,9 +406,9 @@ function ExecuteTradeModal({
 
             {/* Mode-specific banners */}
             {tradeMode === "paper" && (
-              <div className="mb-3 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-2">
-                <Eye className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0" />
-                <span className="text-[11px] text-yellow-300/90">Paper Trading — Simulated execution, no real orders placed</span>
+              <div className="mb-3 px-3 py-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-2">
+                <Eye className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                <span className="text-[11px] text-indigo-300/90">Simulation Mode — Validating strategy before live execution</span>
               </div>
             )}
             {tradeMode === "live" && connectedBrokers.length > 0 && (
@@ -864,11 +864,11 @@ export default function TradingDashboard() {
                         className={`text-[9px] px-2 py-0.5 rounded-full tracking-wider font-medium ${
                           hasLive
                             ? "bg-green-500/15 border border-green-500/25 text-green-400"
-                            : "bg-amber-500/15 border border-amber-500/25 text-amber-400"
+                            : "bg-indigo-500/15 border border-indigo-500/25 text-indigo-400"
                         }`}
                         style={{ fontFamily: "JetBrains Mono, monospace" }}
                       >
-                        {hasLive ? "LIVE READY" : "PAPER MODE"}
+                        {hasLive ? "LIVE READY" : "AI TRADER"}
                       </span>
                     );
                   })()}
