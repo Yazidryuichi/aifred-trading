@@ -2262,9 +2262,9 @@ function OverviewTab({
                     </span>
                   )}
                   <span className="text-[11px] text-zinc-400 whitespace-nowrap">
-                    {entry.message.length > 40
-                      ? entry.message.slice(0, 40) + "..."
-                      : entry.message}
+                    {typeof entry.message === "string"
+                      ? (entry.message.length > 40 ? entry.message.slice(0, 40) + "..." : entry.message)
+                      : String(entry.message ?? "")}
                   </span>
                   <span
                     className="text-[10px] text-zinc-600 whitespace-nowrap"
