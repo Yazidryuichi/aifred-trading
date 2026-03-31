@@ -122,7 +122,18 @@ export async function GET() {
       ? components.every((c) => c.status === "down") ? "down" : "degraded"
       : hasDegraded ? "degraded" : "healthy";
 
-    return NextResponse.json({ overall, timestamp: new Date().toISOString(), components } as SystemHealthResponse);
+    // Determine trading mode from env vars
+    const tradingMode = process.env.TRADING_MODE || "paper";
+    const killSwitchActive = false; // Will be true when kill switch API is connected
+
+    return NextResponse.json({
+      overall,
+      timestamp: new Date().toISOString(),
+      components,
+      mode: tradingMode,
+      status: orchestrator.status === "healthy" ? "running" : "offline",
+      kill_switch_active: killSwitchActive,
+    });
   } catch (error) {
     console.error("System health API error:", error);
     return NextResponse.json({ error: "Failed to check system health" }, { status: 500 });

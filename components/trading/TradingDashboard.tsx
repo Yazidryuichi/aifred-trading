@@ -2091,7 +2091,7 @@ function LiveStatusPanel() {
                 className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${HEALTH_COLORS[systemHealth.overall]?.bg || ""} ${HEALTH_COLORS[systemHealth.overall]?.text || "text-zinc-400"}`}
                 style={{ fontFamily: "JetBrains Mono, monospace" }}
               >
-                {systemHealth.overall.toUpperCase()}
+                {(systemHealth.overall || "unknown").toUpperCase()}
               </span>
             )}
           </div>
@@ -2117,7 +2117,7 @@ function LiveStatusPanel() {
                           </span>
                         )}
                         <span className={`text-[10px] font-medium ${colors.text}`}>
-                          {comp.status === "healthy" ? "OK" : comp.status.toUpperCase()}
+                          {comp.status === "healthy" ? "OK" : (comp.status || "unknown").toUpperCase()}
                         </span>
                       </div>
                     </div>
