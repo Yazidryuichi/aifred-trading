@@ -150,6 +150,24 @@ class CredentialValidator:
                 details={"exchange": name},
             ))
 
+        # Also check Hyperliquid (separate config section)
+        hl_config = self.config.get("execution", {}).get("hyperliquid", {})
+        if hl_config.get("enabled", False):
+            address = hl_config.get("user_address", "")
+            private_key = hl_config.get("private_key", "")
+            if address and private_key and not address.startswith("${") and not private_key.startswith("${"):
+                report.results.append(ValidationResult(
+                    check="hyperliquid_credentials", passed=True,
+                    message=f"hyperliquid: Credentials present (address={_mask_key(address)})",
+                    details={"exchange": "hyperliquid"},
+                ))
+            else:
+                report.results.append(ValidationResult(
+                    check="hyperliquid_credentials", passed=False,
+                    message="hyperliquid: Address or private key is empty or unresolved",
+                    details={"exchange": "hyperliquid", "reason": "empty_or_placeholder"},
+                ))
+
     def _get_credentialed_exchanges(self, report: ValidationReport) -> Dict[str, Dict[str, Any]]:
         """Return exchange configs that passed credential validation."""
         passed_names = {
@@ -158,10 +176,14 @@ class CredentialValidator:
             if r.passed and r.check.endswith("_credentials")
         }
         exchanges = self.config.get("execution", {}).get("exchanges", {})
-        return {
+        result = {
             name: cfg for name, cfg in exchanges.items()
             if name in passed_names
         }
+        # Include Hyperliquid if it passed
+        if "hyperliquid" in passed_names:
+            result["hyperliquid"] = self.config.get("execution", {}).get("hyperliquid", {})
+        return result
 
     def _validate_connectivity(
         self,
