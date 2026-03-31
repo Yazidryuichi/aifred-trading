@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from src.data.websocket_manager import WebSocketManager
+    from src.datafeeds.websocket_manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 

@@ -30,8 +30,8 @@ from pathlib import Path
 from typing import Optional
 
 from src.config import load_config, get_config
-from src.data.market_data_provider import MarketDataProvider
-from src.data.websocket_manager import WebSocketManager
+from src.datafeeds.market_data_provider import MarketDataProvider
+from src.datafeeds.websocket_manager import WebSocketManager
 from src.execution.abstract_exchange import create_exchange
 from src.execution.credential_validator import CredentialValidator
 from src.execution.reconciler import PositionReconciler
@@ -348,7 +348,7 @@ def _run_walk_forward_optimization(config: dict, args: argparse.Namespace) -> in
         Exit code (0 on success, 1 on failure).
     """
     from src.optimizer.walk_forward import WalkForwardOptimizer
-    from src.data.market_data_provider import MarketDataProvider
+    from src.datafeeds.market_data_provider import MarketDataProvider
 
     logger.info("Starting walk-forward optimization mode")
 
