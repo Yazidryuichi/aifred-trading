@@ -813,7 +813,25 @@ export default function TradingDashboard() {
     fetch("/api/trading")
       .then((r) => r.json())
       .then((d) => {
-        setData(d);
+        // Ensure data has required structure — API may return {error: "..."}
+        const safeData = {
+          summary: {
+            totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
+            avgConfidence: 0, signalCount: 0, activeStrategies: 0,
+            sharpeRatio: 0, maxDrawdown: 0, profitFactor: 0,
+            avgWin: 0, avgLoss: 0, totalFees: 0, currentEquity: 0,
+          },
+          byAsset: [],
+          byStrategy: [],
+          byTier: [],
+          recentTrades: [],
+          openPositions: [],
+          equityCurve: [],
+          equity: [],
+          signals: [],
+          ...((d && !d.error) ? d : {}),
+        };
+        setData(safeData);
         setLoading(false);
       })
       .catch((e) => {
