@@ -44,7 +44,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { getConnectedBrokers, type BrokerStatus } from "@/lib/credential-store";
+import { getConnectedBrokers as fetchBrokerStatus, type BrokerStatus } from "@/lib/credential-store";
 import { ConnectWallet } from "@/components/wallet/ConnectWallet";
 import { HyperliquidBalance } from "@/components/wallet/HyperliquidBalance";
 
@@ -137,13 +137,16 @@ function getConnectedBrokers(): ConnectedBrokerInfo[] {
   const results: ConnectedBrokerInfo[] = [];
   const seen = new Set<string>();
 
-  // Source 1: server-side broker status (credentials stored as env vars)
+  // Source 1: server-side broker status (fetched async elsewhere, checked via localStorage cache)
   try {
-    const brokers = await getConnectedBrokers();
-    for (const b of brokers) {
-      if (!seen.has(b.id)) {
-        seen.add(b.id);
-        results.push({ id: b.id, name: b.name, status: "connected" });
+    const cached = localStorage.getItem("aifred_broker_status");
+    if (cached) {
+      const brokers: BrokerStatus[] = JSON.parse(cached);
+      for (const b of brokers) {
+        if (!seen.has(b.id)) {
+          seen.add(b.id);
+          results.push({ id: b.id, name: b.name, status: "connected" });
+        }
       }
     }
   } catch { /* ignore */ }
@@ -303,6 +306,11 @@ function ExecuteTradeModal({
   // Refresh connected brokers on mount (modal is conditionally rendered, so mount = open)
   useEffect(() => {
     setConnectedBrokers(getConnectedBrokers());
+    // Also fetch server-side broker status and cache it
+    fetchBrokerStatus().then((brokers) => {
+      try { localStorage.setItem("aifred_broker_status", JSON.stringify(brokers)); } catch {}
+      setConnectedBrokers(getConnectedBrokers());
+    }).catch(() => {});
   }, []);
 
   // Auto-close 8 seconds after result appears
