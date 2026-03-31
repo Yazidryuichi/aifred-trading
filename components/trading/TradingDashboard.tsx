@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, Component, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AreaChart,
@@ -737,6 +737,37 @@ function ExecuteTradeModal({
 }
 
 // ─── Component ───────────────────────────────────────────────
+// Inner error boundary for catching render errors within the dashboard
+class DashboardErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-zinc-400 mb-2">Dashboard render error:</p>
+          <p className="text-red-400 text-xs font-mono mb-4">{this.state.error.message}</p>
+          <button
+            onClick={() => { localStorage.clear(); this.setState({ error: null }); }}
+            className="px-4 py-2 bg-emerald-500 text-black rounded-lg text-sm"
+          >
+            Reset & Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function TradingDashboard() {
   const router = useRouter();
   const [data, setData] = useState<TradingData | null>(null);
@@ -870,13 +901,17 @@ export default function TradingDashboard() {
     );
   }
 
-  const summary = data.summary ?? {
+  const summary = {
     totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
     avgConfidence: 0, signalCount: 0, activeStrategies: 0,
+    sharpeRatio: 0, maxDrawdown: 0, profitFactor: 0,
+    avgWin: 0, avgLoss: 0, totalFees: 0, currentEquity: 0,
+    ...(data.summary ?? {}),
   };
   const isPositive = summary.totalPnl >= 0;
 
   return (
+    <DashboardErrorBoundary>
     <div
       className="min-h-screen bg-[#06060a] text-white noise-bg relative overflow-hidden"
       style={{ fontFamily: "Outfit, sans-serif" }}
@@ -1174,6 +1209,7 @@ export default function TradingDashboard() {
         )}
       </AnimatePresence>
     </div>
+    </DashboardErrorBoundary>
   );
 }
 
@@ -2189,9 +2225,12 @@ function OverviewTab({
   data: TradingData;
   onNavigateActivity: () => void;
 }) {
-  const summary = data.summary ?? {
+  const summary = {
     totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
     avgConfidence: 0, signalCount: 0, activeStrategies: 0,
+    sharpeRatio: 0, maxDrawdown: 0, profitFactor: 0,
+    avgWin: 0, avgLoss: 0, totalFees: 0, currentEquity: 0,
+    ...(data.summary ?? {}),
   };
   const isPositive = summary.totalPnl >= 0;
   const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
