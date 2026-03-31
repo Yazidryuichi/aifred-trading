@@ -17,8 +17,9 @@ COPY requirements-railway.txt /app/requirements-railway.txt
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements-railway.txt
 
-# Copy source code and config
-COPY src/ /app/src/
+# Copy ALL source code — use . to avoid any ignore-rule issues
+COPY . /app/tmp_copy/
+RUN cp -r /app/tmp_copy/src/ /app/src/ && rm -rf /app/tmp_copy/
 COPY paper_trading.py /app/paper_trading.py
 COPY health_server.py /app/health_server.py
 COPY start.sh /app/start.sh
