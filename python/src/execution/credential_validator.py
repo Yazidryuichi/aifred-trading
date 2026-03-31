@@ -35,11 +35,16 @@ class ValidationReport:
 
     @property
     def all_passed(self) -> bool:
-        return all(r.passed for r in self.results)
+        # Balance checks are warnings, not blockers (especially for dry-run)
+        return all(
+            r.passed for r in self.results
+            if "_balance" not in r.check
+        )
 
     @property
     def critical_failures(self) -> List[ValidationResult]:
-        return [r for r in self.results if not r.passed]
+        return [r for r in self.results
+                if not r.passed and "_balance" not in r.check]
 
     def summary(self) -> str:
         """Human-readable summary."""
