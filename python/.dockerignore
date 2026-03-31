@@ -29,11 +29,10 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data (mounted as volumes, not baked into image — root level only)
-/data/
-/logs/
-# But never ignore src/data (Python module)
-!src/data/
+# Runtime data dirs (not source code) — use exact names to avoid excluding src/data/
+paper_trading.log
+*.db
+*.sqlite
 
 # Build artifacts
 *.egg-info/
