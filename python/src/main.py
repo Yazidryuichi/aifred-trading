@@ -127,6 +127,13 @@ Examples:
         default=None,
         help="Optimization end date YYYY-MM-DD (used with --optimize). Default: today",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Run full live pipeline but stop before submitting orders. "
+             "Logs what would have been traded. Use for 24-48h before going live.",
+    )
     return parser.parse_args()
 
 
@@ -400,6 +407,10 @@ def main() -> int:
 
     # Apply CLI overrides
     config = apply_cli_overrides(config, args)
+
+    if args.dry_run:
+        config.setdefault("execution", {})["dry_run"] = True
+        logger.info("DRY RUN MODE: Orders will NOT be submitted to exchanges")
 
     # Setup logging
     setup_logging(config, args)
