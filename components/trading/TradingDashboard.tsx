@@ -39,9 +39,14 @@ import {
   ArrowUpDown,
   CheckCircle2,
   Loader2,
+  Circle,
+  Server,
+  RefreshCw,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { loadCredentials, getConnectedBrokerIds } from "@/lib/credential-store";
+import { getConnectedBrokers, type BrokerStatus } from "@/lib/credential-store";
+import { ConnectWallet } from "@/components/wallet/ConnectWallet";
+import { HyperliquidBalance } from "@/components/wallet/HyperliquidBalance";
 
 // ─── Types ────────────────────────────────────────────────────
 interface TradingData {
@@ -132,13 +137,13 @@ function getConnectedBrokers(): ConnectedBrokerInfo[] {
   const results: ConnectedBrokerInfo[] = [];
   const seen = new Set<string>();
 
-  // Source 1: credential store (primary — survives deploys)
+  // Source 1: server-side broker status (credentials stored as env vars)
   try {
-    const credIds = getConnectedBrokerIds();
-    for (const id of credIds) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        results.push({ id, name: BROKER_NAMES[id] || id, status: "connected" });
+    const brokers = await getConnectedBrokers();
+    for (const b of brokers) {
+      if (!seen.has(b.id)) {
+        seen.add(b.id);
+        results.push({ id: b.id, name: b.name, status: "connected" });
       }
     }
   } catch { /* ignore */ }
@@ -321,10 +326,8 @@ function ExecuteTradeModal({
     setExecuting(true);
     setError(null);
     try {
-      // For live trades, send credentials from localStorage so the server can execute
-      const brokerCredentials = tradeMode === "live" && selectedBroker
-        ? loadCredentials(selectedBroker)
-        : undefined;
+      // Credentials are now server-side only (env vars)
+      const brokerCredentials = undefined;
 
       const res = await fetch("/api/trading/execute", {
         method: "POST",
@@ -915,6 +918,9 @@ export default function TradingDashboard() {
             </div>
 
             <div className="flex items-center gap-2 md:gap-4">
+              {/* Wallet Connection */}
+              <ConnectWallet />
+
               {/* Execute Trade Button — always visible, prominent */}
               <button
                 onClick={() => setShowTradeModal(true)}
@@ -1633,10 +1639,10 @@ function RegimeTab() {
                             {new Date(t.exitDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                           </td>
                           <td className="py-2 pr-3 text-right text-zinc-300">
-                            {t.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {(t.entryPrice ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                           </td>
                           <td className="py-2 pr-3 text-right text-zinc-300">
-                            {t.exitPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {(t.exitPrice ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                           </td>
                           <td className={`py-2 pr-3 text-right font-semibold ${t.pnlPercent >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                             {t.pnlPercent >= 0 ? "+" : ""}{t.pnlPercent.toFixed(2)}%
@@ -1665,6 +1671,481 @@ function RegimeTab() {
           )}
         </>
       ) : null}
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LIVE STATUS PANEL
+// ═══════════════════════════════════════════════════════════════
+
+interface PaperStatusData {
+  running: boolean;
+  scanCount: number;
+  lastScanTime: string | null;
+  lastPrices: Record<string, number>;
+  portfolioValue: number;
+  positions: { asset: string; side: string; entryPrice: number; currentPrice: number; size: number; pnl: number; pnlPercent: number }[];
+  totalPnl: number;
+  signalsGenerated: number;
+  agentStatus: Record<string, boolean>;
+  startedAt: string | null;
+  assets: string[];
+  scanInterval: number;
+  logLines: number;
+  lastActivity: string | null;
+  // Railway API fields
+  source?: string;
+  uptime?: string;
+  log_available?: boolean;
+  total_lines?: number;
+  last_scan?: string | null;
+  last_prices?: string | null;
+  log_tail?: string[];
+}
+
+/** Normalize Railway API response to match expected PaperStatusData shape */
+function normalizePaperStatus(raw: Record<string, unknown>): PaperStatusData {
+  // If it already has the expected shape (local API), return as-is
+  if (raw.portfolioValue !== undefined) return raw as unknown as PaperStatusData;
+
+  // Railway shape — extract what we can from log data
+  const logTail = (raw.log_tail as string[]) || [];
+  const totalLines = (raw.total_lines as number) || 0;
+
+  // Count scans from log
+  const scanLines = logTail.filter((l: string) => l.includes("=== Paper Scan"));
+  const signalLines = logTail.filter((l: string) => l.includes("On-chain signal") || l.includes("signal for"));
+
+  return {
+    running: !!(raw.running || raw.log_available),
+    scanCount: scanLines.length,
+    lastScanTime: (() => {
+      const scan = raw.last_scan as string;
+      if (!scan) return null;
+      // Extract timestamp from log line like "2026-03-30 13:27:53 | INFO | ..."
+      const match = scan.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+      return match ? match[1] : null;
+    })(),
+    lastPrices: {},
+    portfolioValue: 10000,
+    positions: [],
+    totalPnl: 0,
+    signalsGenerated: signalLines.length,
+    agentStatus: {},
+    startedAt: null,
+    assets: ["ETH", "BTC"],
+    scanInterval: 60,
+    logLines: totalLines,
+    lastActivity: logTail.length > 0 ? logTail[logTail.length - 1] : null,
+    source: raw.source as string,
+    uptime: raw.uptime as string,
+  };
+}
+
+interface SystemHealthData {
+  overall: "healthy" | "degraded" | "down";
+  timestamp: string;
+  components: {
+    name: string;
+    status: "healthy" | "degraded" | "down";
+    latencyMs: number | null;
+    message: string;
+  }[];
+}
+
+interface LivePricesData {
+  prices: Record<string, number | null>;
+  source: string;
+  cached: boolean;
+  timestamp: string;
+}
+
+function LiveStatusPanel() {
+  const [paperStatus, setPaperStatus] = useState<PaperStatusData | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
+  const [livePrices, setLivePrices] = useState<LivePricesData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  const fetchAll = useCallback(() => {
+    Promise.allSettled([
+      fetch("/api/trading/paper-status").then((r) => r.json()),
+      fetch("/api/trading/system-health").then((r) => r.json()),
+      fetch("/api/trading/live-prices").then((r) => r.json()),
+    ]).then(([paperRes, healthRes, pricesRes]) => {
+      if (paperRes.status === "fulfilled") setPaperStatus(normalizePaperStatus(paperRes.value));
+      if (healthRes.status === "fulfilled") setSystemHealth(healthRes.value);
+      if (pricesRes.status === "fulfilled") setLivePrices(pricesRes.value);
+      setLoading(false);
+      setLastRefresh(new Date());
+    });
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const interval = setInterval(fetchAll, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
+
+  const HEALTH_COLORS: Record<string, { dot: string; text: string; bg: string }> = {
+    healthy: { dot: "bg-emerald-400", text: "text-emerald-400", bg: "bg-emerald-500/10" },
+    degraded: { dot: "bg-amber-400", text: "text-amber-400", bg: "bg-amber-500/10" },
+    down: { dot: "bg-red-400", text: "text-red-400", bg: "bg-red-500/10" },
+  };
+
+  if (loading) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-glass rounded-2xl p-6"
+      >
+        <div className="flex items-center gap-3">
+          <Loader2 className="w-4 h-4 text-zinc-500 animate-spin" />
+          <span className="text-xs text-zinc-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+            Loading live status...
+          </span>
+        </div>
+      </motion.div>
+    );
+  }
+
+  const btcPrice = livePrices?.prices?.BTC;
+  const ethPrice = livePrices?.prices?.ETH;
+  const solPrice = livePrices?.prices?.SOL;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.05 }}
+      className="space-y-4"
+    >
+      {/* ─── Section Label ──────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[10px] text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/15 px-2.5 py-1 rounded-lg tracking-wider uppercase font-medium"
+            style={{ fontFamily: "JetBrains Mono, monospace" }}
+          >
+            Live System Status
+          </span>
+          {paperStatus?.running && (
+            <span className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              <span className="text-[10px] text-emerald-400" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                RUNNING
+              </span>
+            </span>
+          )}
+          {paperStatus && !paperStatus.running && (
+            <span className="flex items-center gap-1.5">
+              <Circle className="w-2 h-2 text-red-400 fill-red-400" />
+              <span className="text-[10px] text-red-400" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                STOPPED
+              </span>
+            </span>
+          )}
+        </div>
+        <button
+          onClick={fetchAll}
+          className="flex items-center gap-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+          style={{ fontFamily: "JetBrains Mono, monospace" }}
+        >
+          <RefreshCw className="w-3 h-3" />
+          {lastRefresh.toLocaleTimeString()}
+        </button>
+      </div>
+
+      {/* ─── Main Grid ──────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* ── Paper Trading Status ────────────────────────── */}
+        <div className="card-glass rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-300 flex items-center gap-2">
+              <Radio className="w-3.5 h-3.5 text-emerald-400" />
+              Paper Trading
+            </h3>
+            {paperStatus?.scanCount != null && (
+              <span
+                className="text-[10px] text-zinc-600"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}
+              >
+                Scan #{paperStatus.scanCount}
+              </span>
+            )}
+          </div>
+
+          {paperStatus ? (
+            <div className="space-y-3">
+              {/* Status row */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Status</span>
+                <span
+                  className={`text-[11px] font-medium ${paperStatus.running ? "text-emerald-400" : "text-red-400"}`}
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  {paperStatus.running ? "Active" : "Inactive"}
+                </span>
+              </div>
+
+              {/* Portfolio */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Portfolio</span>
+                <span
+                  className="text-[11px] text-zinc-300 font-medium"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  ${(paperStatus.portfolioValue ?? 0).toLocaleString()}
+                </span>
+              </div>
+
+              {/* Assets */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Monitoring</span>
+                <span
+                  className="text-[11px] text-zinc-400"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  {paperStatus.assets.join(", ") || "N/A"}
+                </span>
+              </div>
+
+              {/* Last Scan */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Last Scan</span>
+                <span
+                  className="text-[11px] text-zinc-400"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  {paperStatus.lastScanTime
+                    ? timeAgo(paperStatus.lastScanTime.replace(" ", "T") + "Z")
+                    : "N/A"}
+                </span>
+              </div>
+
+              {/* Signals */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Signals</span>
+                <span
+                  className="text-[11px] text-zinc-300"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  {paperStatus.signalsGenerated}
+                </span>
+              </div>
+
+              {/* Scan interval */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-500">Interval</span>
+                <span
+                  className="text-[11px] text-zinc-400"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}
+                >
+                  {paperStatus.scanInterval}s
+                </span>
+              </div>
+
+              {/* Last prices from paper log */}
+              {Object.keys(paperStatus.lastPrices).length > 0 && (
+                <div className="pt-2 border-t border-white/[0.04]">
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-wider" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    Last Log Prices
+                  </span>
+                  <div className="mt-1.5 space-y-1">
+                    {Object.entries(paperStatus.lastPrices).map(([asset, price]) => (
+                      <div key={asset} className="flex items-center justify-between">
+                        <span className="text-[11px] text-zinc-400">{asset}</span>
+                        <span
+                          className="text-[11px] text-zinc-300"
+                          style={{ fontFamily: "JetBrains Mono, monospace" }}
+                        >
+                          ${(price ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] text-zinc-600">No paper trading data available</div>
+          )}
+        </div>
+
+        {/* ── Live Prices ─────────────────────────────────── */}
+        <div className="card-glass rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-300 flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              Live Prices
+            </h3>
+            <span
+              className="text-[10px] text-zinc-600"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}
+            >
+              {livePrices?.source === "hyperliquid-mainnet" ? "Hyperliquid" : "Unavailable"}
+            </span>
+          </div>
+
+          {livePrices && !livePrices.prices?.BTC ? (
+            <div className="text-[11px] text-zinc-600">Unable to fetch prices</div>
+          ) : (
+            <div className="space-y-3">
+              {/* BTC */}
+              {btcPrice != null && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-amber-400">BTC</span>
+                    <span className="text-[10px] text-zinc-600">Bitcoin</span>
+                  </div>
+                  <span
+                    className="text-sm font-semibold text-zinc-200 glow-gold"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    ${btcPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+
+              {/* ETH */}
+              {ethPrice != null && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-blue-400">ETH</span>
+                    <span className="text-[10px] text-zinc-600">Ethereum</span>
+                  </div>
+                  <span
+                    className="text-sm font-semibold text-zinc-200"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    ${ethPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+
+              {/* SOL */}
+              {solPrice != null && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-purple-400">SOL</span>
+                    <span className="text-[10px] text-zinc-600">Solana</span>
+                  </div>
+                  <span
+                    className="text-sm font-semibold text-zinc-200"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    ${solPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+
+              {/* Additional assets */}
+              {livePrices?.prices && (
+                <div className="pt-2 border-t border-white/[0.04] space-y-1.5">
+                  {Object.entries(livePrices.prices)
+                    .filter(([k]) => !["BTC", "ETH", "SOL"].includes(k))
+                    .filter(([, v]) => v != null)
+                    .slice(0, 6)
+                    .map(([asset, price]) => (
+                      <div key={asset} className="flex items-center justify-between">
+                        <span className="text-[11px] text-zinc-500">{asset}</span>
+                        <span
+                          className="text-[11px] text-zinc-400"
+                          style={{ fontFamily: "JetBrains Mono, monospace" }}
+                        >
+                          ${((price as number) ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: (price as number) < 1 ? 6 : 2 })}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── System Health ────────────────────────────────── */}
+        <div className="card-glass rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-300 flex items-center gap-2">
+              <Server className="w-3.5 h-3.5 text-blue-400" />
+              System Health
+            </h3>
+            {systemHealth && (
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${HEALTH_COLORS[systemHealth.overall]?.bg || ""} ${HEALTH_COLORS[systemHealth.overall]?.text || "text-zinc-400"}`}
+                style={{ fontFamily: "JetBrains Mono, monospace" }}
+              >
+                {systemHealth.overall.toUpperCase()}
+              </span>
+            )}
+          </div>
+
+          {systemHealth ? (
+            <div className="space-y-2.5">
+              {systemHealth.components.map((comp) => {
+                const colors = HEALTH_COLORS[comp.status] || HEALTH_COLORS.down;
+                return (
+                  <div key={comp.name} className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+                        <span className="text-[11px] text-zinc-300">{comp.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {comp.latencyMs != null && comp.latencyMs > 0 && (
+                          <span
+                            className="text-[10px] text-zinc-600"
+                            style={{ fontFamily: "JetBrains Mono, monospace" }}
+                          >
+                            {comp.latencyMs}ms
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-medium ${colors.text}`}>
+                          {comp.status === "healthy" ? "OK" : comp.status.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                    <p
+                      className="text-[10px] text-zinc-600 pl-3.5 truncate"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}
+                      title={comp.message}
+                    >
+                      {comp.message}
+                    </p>
+                  </div>
+                );
+              })}
+
+              {/* Agent status from paper log */}
+              {paperStatus && Object.keys(paperStatus.agentStatus).length > 0 && (
+                <div className="pt-2 border-t border-white/[0.04]">
+                  <span
+                    className="text-[10px] text-zinc-600 uppercase tracking-wider"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    AI Agents
+                  </span>
+                  <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1">
+                    {Object.entries(paperStatus.agentStatus).map(([agent, ok]) => (
+                      <div key={agent} className="flex items-center gap-1.5">
+                        <div className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-emerald-400" : "bg-zinc-600"}`} />
+                        <span className="text-[10px] text-zinc-500 capitalize">{agent.replace(/_/g, " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[11px] text-zinc-600">Unable to check system health</div>
+          )}
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -1783,6 +2264,12 @@ function OverviewTab({
           </div>
         </motion.div>
       )}
+
+      {/* ─── Hyperliquid Account ──────────────────────────── */}
+      <HyperliquidBalance />
+
+      {/* ─── Live System Status ─────────────────────────────── */}
+      <LiveStatusPanel />
 
       {/* ─── Backtest Label ─────────────────────────────────── */}
       <div className="flex items-center gap-3 mb-1">

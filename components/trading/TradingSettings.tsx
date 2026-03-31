@@ -28,12 +28,7 @@ import {
   Bot,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import {
-  saveCredentials as saveCredsToLocal,
-  loadAllCredentials,
-  removeCredentials as removeCredsFromLocal,
-  isConnected as isLocalConnected,
-} from "@/lib/credential-store";
+import { getConnectedBrokers, isConnected, type BrokerStatus } from "@/lib/credential-store";
 
 // ─── Types ────────────────────────────────────────────────────
 interface Broker {
@@ -113,8 +108,11 @@ const DEFAULT_BROKERS: Broker[] = [
     description: "Professional-grade multi-asset broker",
     icon: "building",
     status: "disconnected",
-    comingSoon: true,
-    requiredCredentials: [],
+    requiredCredentials: [
+      { key: "host", label: "TWS/Gateway Host", type: "text" },
+      { key: "port", label: "Port", type: "text" },
+      { key: "client_id", label: "Client ID", type: "text" },
+    ],
   },
   {
     id: "metatrader",
@@ -123,8 +121,11 @@ const DEFAULT_BROKERS: Broker[] = [
     description: "Industry-standard forex trading terminal",
     icon: "globe",
     status: "disconnected",
-    comingSoon: true,
-    requiredCredentials: [],
+    requiredCredentials: [
+      { key: "server", label: "Server", type: "text" },
+      { key: "login", label: "Login ID", type: "text" },
+      { key: "password", label: "Password", type: "password" },
+    ],
   },
   {
     id: "bloomberg",
@@ -133,8 +134,10 @@ const DEFAULT_BROKERS: Broker[] = [
     description: "Institutional-grade market data & execution",
     icon: "monitor",
     status: "disconnected",
-    comingSoon: true,
-    requiredCredentials: [],
+    requiredCredentials: [
+      { key: "api_key", label: "API Key", type: "password" },
+      { key: "port", label: "BLPAPI Port", type: "text" },
+    ],
   },
 ];
 
@@ -261,22 +264,14 @@ export default function TradingSettings() {
     };
   }, []);
 
-  // Load brokers — use DEFAULT_BROKERS for definitions, localStorage for connection status
-  const fetchBrokers = useCallback(() => {
-    // Enrich default broker definitions with connection status from localStorage
-    const localCreds = loadAllCredentials();
+  // Load brokers — use DEFAULT_BROKERS for definitions, server-side API for connection status
+  const fetchBrokers = useCallback(async () => {
+    // Enrich default broker definitions with connection status from server
+    const connectedBrokers = await getConnectedBrokers();
     const enriched: Broker[] = DEFAULT_BROKERS.map((broker) => ({
       ...broker,
-      status: isLocalConnected(broker.id) ? ("connected" as const) : ("disconnected" as const),
-      accountInfo: localCreds[broker.id]?.accountInfo
-        ? [
-            { label: "Account ID", value: localCreds[broker.id].accountInfo!.accountId },
-            ...Object.entries(localCreds[broker.id].accountInfo!.balance).map(([k, v]) => ({
-              label: `${k} Balance`,
-              value: String(v),
-            })),
-          ]
-        : undefined,
+      status: isConnected(connectedBrokers, broker.id) ? ("connected" as const) : ("disconnected" as const),
+      accountInfo: undefined,
     }));
     setBrokers(enriched);
 
@@ -380,13 +375,9 @@ export default function TradingSettings() {
     if (!selectedBroker) return;
     setSaving(true);
     try {
-      // Save credentials to localStorage (client-side persistence)
-      saveCredsToLocal(selectedBroker.id, credentials, {
-        success: testResult?.success ?? false,
-        balance: testResult?.accountInfo
-          ? Object.fromEntries(testResult.accountInfo.map((a) => [a.label, parseFloat(a.value) || 0]))
-          : undefined,
-      });
+      // Credentials are now managed server-side via environment variables.
+      // This UI can test connections but cannot save credentials.
+      // Set env vars on your deployment platform (Railway, Vercel, etc.)
 
       // Update local broker status immediately
       setBrokers((prev) =>
@@ -394,13 +385,6 @@ export default function TradingSettings() {
           b.id === selectedBroker.id ? { ...b, status: "connected" as const } : b
         )
       );
-      // Sync legacy localStorage key for TradingDashboard compatibility
-      try {
-        const raw = localStorage.getItem("aifred_broker_connections");
-        const saved: Record<string, string> = raw ? JSON.parse(raw) : {};
-        saved[selectedBroker.id] = "connected";
-        localStorage.setItem("aifred_broker_connections", JSON.stringify(saved));
-      } catch { /* ignore */ }
 
       setSelectedBroker(null);
       setCredentials({});
@@ -416,25 +400,13 @@ export default function TradingSettings() {
     (brokerId: string) => {
       setDisconnecting(brokerId);
       try {
-        // Remove credentials from localStorage
-        removeCredsFromLocal(brokerId);
-
-        // Update local broker status
+        // Credentials are server-side env vars — disconnect just updates UI state
+        // To fully disconnect, remove env vars from deployment platform
         setBrokers((prev) =>
           prev.map((b) =>
             b.id === brokerId ? { ...b, status: "disconnected" as const } : b,
           ),
         );
-        // Clear from legacy localStorage key
-        try {
-          const raw = localStorage.getItem("aifred_broker_connections");
-          const saved: Record<string, string> = raw ? JSON.parse(raw) : {};
-          delete saved[brokerId];
-          localStorage.setItem(
-            "aifred_broker_connections",
-            JSON.stringify(saved),
-          );
-        } catch { /* ignore */ }
       } catch {
         // Silently handle
       } finally {
