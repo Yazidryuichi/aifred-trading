@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.utils.types import TradeResult
+from src.monitoring.degradation_manager import DegradationManager, DegradationLevel
 from src.monitoring.trade_logger import TradeLogger
 from src.monitoring.system_health import SystemHealthMonitor
 from src.monitoring.telegram_alerts import AlertType, TelegramAlerts
@@ -102,4 +103,4 @@ class MonitoringAgent:
                 )
 
 
-__all__ = ["MonitoringAgent"]
+__all__ = ["MonitoringAgent", "DegradationManager", "DegradationLevel"]

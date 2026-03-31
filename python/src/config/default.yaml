@@ -90,6 +90,20 @@ risk:
     weekly_limit_pct: 10.0
     weekly_pause_hours: 72
 
+  dynamic_kelly:
+    enabled: true
+    lookback_trades: 50
+    lookback_days: 30
+    fractional_multiplier: 0.5
+    min_samples: 20
+    max_position_pct: 5.0
+    min_position_pct: 0.5
+    default_win_rate: 0.55
+    default_avg_win: 2.0
+    default_avg_loss: 1.0
+    drawdown_shrink_start_pct: 3.0
+    drawdown_shrink_max_pct: 8.0
+
   streak_multipliers:
     wins_3: 1.20
     wins_5: 1.30
@@ -116,6 +130,39 @@ risk:
       kill_zone_multiplier: 1.15
       off_multiplier: 0.85
 
+meta_reasoning:
+  enabled: false  # disabled by default, enable when API key is set
+  provider: "anthropic"  # "anthropic" or "openai"
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 1024
+  temperature: 0.3
+  timeout_seconds: 30
+  max_confidence_boost: 10.0
+  max_confidence_penalty: 20.0
+  min_trigger_confidence: 60.0  # only call LLM if fused confidence exceeds this
+  # Use in signal fusion: if enabled, meta-reasoning adjusts confidence after fusion
+  apply_to_fusion: true
+
+data:
+  websocket:
+    enabled: true
+    exchange: "binance"
+    reconnect_tiers: [0.5, 5.0, 30.0]  # seconds per tier
+    dead_connection_timeout: 240  # seconds — Tier 4 dead connection detection
+    rest_fallback_interval: 10  # seconds between REST polls when WS is down
+    health_check_interval: 30  # seconds between health monitor checks
+
+safety:
+  # Non-overridable account safety limits (last line of defense)
+  # These can only TIGHTEN the hard-coded limits, never loosen them
+  # Hard maximums: daily_loss=2%, weekly_loss=5%, max_position=5%, max_exposure=30%, max_positions=5
+  daily_loss_limit_pct: 2.0
+  weekly_loss_limit_pct: 5.0
+  max_position_pct: 5.0
+  max_exposure_pct: 30.0
+  max_positions: 5
+  kill_switch_enabled: true
+
 execution:
   default_order_type: "limit"
   max_slippage_pct: 0.5
@@ -132,11 +179,51 @@ execution:
       api_key: "${ALPACA_API_KEY}"
       api_secret: "${ALPACA_API_SECRET}"
 
+  hyperliquid:
+    enabled: true
+    user_address: "${HYPERLIQUID_ADDRESS}"
+    private_key: "${HYPERLIQUID_PRIVATE_KEY}"
+    testnet: false
+    default_leverage: 3
+    max_leverage: 10
+
+validation:
+  min_balance_usd: 100  # minimum account balance to start live trading
+  required_exchanges: []  # empty = at least one must work; list = all listed must work
+  connectivity_timeout_ms: 10000
+  check_trading_permissions: true
+
+reconciliation:
+  enabled: true
+  interval_seconds: 300  # periodic reconciliation every 5 min
+  persist_positions: true
+  db_path: "data/positions.db"
+  on_startup: true  # reconcile on startup
+  trust_exchange: true  # exchange state is source of truth
+
+degradation:
+  enabled: true
+  failure_threshold: 3  # consecutive failures before marking subsystem FAILED
+  recovery_backoff_seconds: 300  # wait before retrying failed subsystem
+  safe_mode_close_positions: false  # auto-close positions in safe mode?
+
 monitoring:
   telegram:
     enabled: false
     bot_token: "${TELEGRAM_BOT_TOKEN}"
     chat_id: "${TELEGRAM_CHAT_ID}"
+    heartbeat_interval: 1800  # 30 min
+    daily_report_hour: 0  # midnight UTC
+    health_report_interval: 14400  # 4 hours
+    commands_enabled: true
+    # Alert types that trigger notifications
+    alerts:
+      trade_executed: true
+      position_closed: true
+      stop_loss_hit: true
+      safety_triggered: true
+      system_error: true
+      drawdown_warning: true
   dashboard:
     enabled: true
     port: 8501
@@ -148,3 +235,28 @@ optimizer:
   validation_period: "2025-12-01/2026-01-31"  # fixed OOS period
   min_trades_for_valid: 20
   keep_threshold: 0.005  # must improve by 0.5% to keep
+
+  walk_forward:
+    train_months: 6          # training window length
+    validate_months: 1       # validation window length
+    test_months: 1           # out-of-sample test window length
+    purge_days: 7            # gap between train and validate to prevent leakage
+    roll_months: 1           # roll forward step size
+    n_trials: 50             # Optuna trials per window (TPE Bayesian search)
+    max_drawdown_pct: 15.0   # reject trials with drawdown above this
+    min_trades: 10           # reject trials with fewer trades
+    metric: "sortino"        # primary optimization target
+
+  tournament:
+    enabled: false
+    min_contestants: 5
+    max_contestants: 20
+    min_days_before_promotion: 7
+    max_days_before_demotion: 14
+    promotion_min_sortino: 0.5
+    demotion_max_drawdown_pct: 15.0
+    initial_balance: 10000
+
+audit:
+  enabled: true
+  directory: "data/audit"

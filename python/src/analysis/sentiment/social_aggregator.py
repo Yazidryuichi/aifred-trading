@@ -10,7 +10,7 @@ import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.analysis.sentiment.text_preprocessor import TextPreprocessor
 from src.utils.types import SentimentScore

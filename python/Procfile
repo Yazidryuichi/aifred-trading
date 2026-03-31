@@ -1,0 +1,1 @@
+worker: python paper_trading.py --assets ETH,BTC --duration 0 --interval 60

@@ -25,16 +25,32 @@ from src.analysis.technical.indicators import (
     is_in_kill_zone,
 )
 from src.analysis.technical.feature_engineering import FeatureEngineer
-from src.analysis.technical.lstm_model import LSTMModel
-from src.analysis.technical.transformer_model import TransformerModel
-from src.analysis.technical.pattern_cnn import PatternCNN
-from src.analysis.technical.ensemble import (
-    EnsembleMetaLearner,
-    SIGNAL_TIER_C,
-    generate_reasoning,
-)
-from src.analysis.technical.training import WalkForwardTrainer
-from src.analysis.technical.evaluation import ModelEvaluator, BacktestEngine, ModelMetrics
+# Lazy imports for ML models — torch/tensorflow may not be installed in lightweight deployments
+try:
+    from src.analysis.technical.lstm_model import LSTMModel
+    from src.analysis.technical.transformer_model import TransformerModel
+    from src.analysis.technical.pattern_cnn import PatternCNN
+    from src.analysis.technical.ensemble import (
+        EnsembleMetaLearner,
+        SIGNAL_TIER_C,
+        generate_reasoning,
+    )
+    from src.analysis.technical.training import WalkForwardTrainer
+    from src.analysis.technical.evaluation import ModelEvaluator, BacktestEngine, ModelMetrics
+    _ML_AVAILABLE = True
+except ImportError as _ml_err:
+    logging.getLogger(__name__).warning("ML models unavailable: %s — running in indicator-only mode", _ml_err)
+    LSTMModel = None  # type: ignore
+    TransformerModel = None  # type: ignore
+    PatternCNN = None  # type: ignore
+    EnsembleMetaLearner = None  # type: ignore
+    SIGNAL_TIER_C = "C"
+    generate_reasoning = None  # type: ignore
+    WalkForwardTrainer = None  # type: ignore
+    ModelEvaluator = None  # type: ignore
+    BacktestEngine = None  # type: ignore
+    ModelMetrics = None  # type: ignore
+    _ML_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 

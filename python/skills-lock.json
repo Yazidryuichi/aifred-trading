@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "railway": {
+      "source": "mokarram-PU/claude-skill-railway",
+      "sourceType": "github",
+      "computedHash": "1cb15bc74f82db371aac08514f66faa62ef548b8c030394a9d0e45b8d873a1fd"
+    },
+    "use-railway": {
+      "source": "railwayapp/railway-skills",
+      "sourceType": "github",
+      "computedHash": "c1a12a7b4914878399c0d634c49498fdb3bff1d91ef2c125932491bde3a4190a"
+    }
+  }
+}

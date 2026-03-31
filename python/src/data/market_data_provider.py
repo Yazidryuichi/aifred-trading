@@ -12,10 +12,13 @@ Includes a TTL-based cache to avoid excessive API calls.
 import logging
 import re
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from src.data.websocket_manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +207,9 @@ class MarketDataProvider:
         self._ccxt_exchange = None
         self._oanda_exchange = None
 
+        # Optional WebSocket manager for real-time data
+        self._ws_manager: Optional["WebSocketManager"] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -225,6 +231,18 @@ class MarketDataProvider:
         if cached is not None:
             logger.debug("Cache hit for %s (%s)", asset, timeframe)
             return cached
+
+        # Check WebSocket candle cache before making a REST call
+        if self._ws_manager is not None:
+            ws_df = self._ws_manager.get_cached_candles(asset, timeframe)
+            if ws_df is not None and len(ws_df) >= self._min_candles:
+                logger.debug(
+                    "WebSocket cache hit for %s (%s) — %d candles",
+                    asset, timeframe, len(ws_df),
+                )
+                ws_df = compute_indicators(ws_df)
+                self._cache.put(cache_key, ws_df)
+                return ws_df
 
         try:
             if _is_crypto(asset):
@@ -271,6 +289,43 @@ class MarketDataProvider:
     def callback(self) -> Callable:
         """Convenience property returning the callback for the orchestrator."""
         return self.get_data
+
+    # ------------------------------------------------------------------
+    # WebSocket integration
+    # ------------------------------------------------------------------
+
+    def set_websocket_manager(self, ws_manager: "WebSocketManager") -> None:
+        """Attach a WebSocketManager for real-time data.
+
+        When set, ``get_data()`` will check the WebSocket candle cache before
+        falling back to REST, and ``get_realtime_price()`` will return the
+        latest streamed price.
+        """
+        self._ws_manager = ws_manager
+        logger.info("WebSocketManager attached to MarketDataProvider")
+
+    def get_realtime_price(self, asset: str) -> Optional[float]:
+        """Return the latest real-time price from the WebSocket cache.
+
+        This is the method the position monitor should call for stop-loss
+        checks and other latency-sensitive operations.
+
+        Returns:
+            The last traded price as a float, or None if no WebSocket data
+            is available for *asset*.
+        """
+        if self._ws_manager is None:
+            return None
+        return self._ws_manager.get_price(asset)
+
+    def get_realtime_ticker(self, asset: str) -> Optional[Dict[str, Any]]:
+        """Return full ticker data (bid/ask/last/volume/timestamp) from WS.
+
+        Returns None if no WebSocket data is available.
+        """
+        if self._ws_manager is None:
+            return None
+        return self._ws_manager.get_ticker(asset)
 
     # ------------------------------------------------------------------
     # Private fetch methods

@@ -1,0 +1,40 @@
+# AIFred Trading — Railway Deployment (lightweight)
+# ==================================================
+# Excludes torch/tensorflow/heavy ML to fit Railway resource limits.
+# The system degrades gracefully without ML models.
+
+# Core data
+numpy>=1.25.0
+pandas>=2.1.0
+scipy>=1.11.0
+
+# Technical analysis (pure Python, no TA-Lib C dep)
+pandas-ta>=0.3.14
+
+# ML (lightweight only)
+scikit-learn>=1.3.0
+xgboost>=2.0.0
+
+# Config & env
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+
+# Async & networking
+aiohttp>=3.9.0
+websockets>=12.0
+requests>=2.31.0
+
+# Exchange connectors
+ccxt>=4.0.0
+
+# NLP (lightweight)
+feedparser>=6.0.10
+
+# Scheduling
+apscheduler>=3.10.4
+
+# Logging
+structlog>=23.2.0
+
+# Health server
+aiohttp>=3.9.0

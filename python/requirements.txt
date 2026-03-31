@@ -53,8 +53,14 @@ praw>=7.7.0
 requests>=2.31.0
 apscheduler>=3.10.4
 
+# Optimization
+optuna>=3.4.0
+
 # ML Tracking
 mlflow>=2.9.0
+
+# MCP (Model Context Protocol)
+mcp>=1.0.0
 
 # Development
 pytest>=7.4.0

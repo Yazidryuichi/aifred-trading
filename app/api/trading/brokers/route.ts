@@ -163,7 +163,6 @@ const BROKER_REGISTRY: BrokerDefinition[] = [
       { key: "port", label: "Port", type: "text" },
       { key: "client_id", label: "Client ID", type: "text" },
     ],
-    comingSoon: true,
   },
   {
     id: "metatrader",
@@ -179,7 +178,6 @@ const BROKER_REGISTRY: BrokerDefinition[] = [
       { key: "login", label: "Login", type: "text" },
       { key: "password", label: "Password", type: "password" },
     ],
-    comingSoon: true,
   },
   {
     id: "bloomberg",
@@ -187,8 +185,10 @@ const BROKER_REGISTRY: BrokerDefinition[] = [
     category: "all",
     description: "Institutional-grade market data and trading platform",
     supportedAssets: ["All asset classes"],
-    requiredCredentials: [],
-    comingSoon: true,
+    requiredCredentials: [
+      { key: "api_key", label: "API Key", type: "password" },
+      { key: "port", label: "BLPAPI Port", type: "text" },
+    ],
   },
 ];
 
@@ -400,13 +400,6 @@ export async function POST(request: NextRequest) {
     if (!broker) {
       return NextResponse.json(
         { success: false, message: `Unknown broker: ${brokerId}` },
-        { status: 400 },
-      );
-    }
-
-    if (broker.comingSoon) {
-      return NextResponse.json(
-        { success: false, message: `${broker.name} integration is coming soon` },
         { status: 400 },
       );
     }
