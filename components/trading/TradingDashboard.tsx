@@ -1129,7 +1129,7 @@ export default function TradingDashboard() {
               fontFamily: "JetBrains Mono, monospace",
             }}
           >
-            {[...data.byAsset, ...data.byAsset].map((a, i) => (
+            {[...(data.byAsset ?? []), ...(data.byAsset ?? [])].map((a, i) => (
               <span key={i} className="text-[11px] flex items-center gap-2">
                 <span className="text-zinc-400">{a.asset}</span>
                 <span
@@ -2436,7 +2436,7 @@ function OverviewTab({
             Performance by Asset
           </h3>
           <div className="space-y-3">
-            {data.byAsset
+            {(data.byAsset ?? [])
               .sort((a, b) => b.pnl - a.pnl)
               .map((a) => (
                 <AssetRow key={a.asset} {...a} />
