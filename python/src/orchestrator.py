@@ -35,6 +35,7 @@ from src.monitoring.degradation_manager import DegradationManager, DegradationLe
 from src.monitoring.model_tracker import ModelTracker
 from src.monitoring.trade_logger import TradeLogger
 from src.monitoring.telegram_alerts import AlertType, TelegramAlerts
+from src.monitoring.telegram_commands import TelegramCommandHandler
 from src.optimizer.model_ab_testing import ModelABTestingFramework
 from src.optimizer.model_rotation import ModelRotationManager
 from src.risk.correlation_tracker import CorrelationTracker
@@ -267,6 +268,9 @@ class Orchestrator:
             "reconciliation", {}
         ).get("interval_seconds", 300)  # default 5 min
 
+        # Telegram command handler (initialized via setup_telegram_commands)
+        self._telegram_commands: Optional[TelegramCommandHandler] = None
+
     def _build_asset_list(self, config: Dict[str, Any]) -> Dict[str, AssetClass]:
         """Build flat asset -> asset_class mapping from config."""
         assets = {}
@@ -441,6 +445,18 @@ class Orchestrator:
 
         return status
 
+    def setup_telegram_commands(self) -> None:
+        """Initialize Telegram command handler for /kill, /resume, /status."""
+        if not self._telegram or not self._telegram._enabled:
+            return
+        self._telegram_commands = TelegramCommandHandler(
+            bot_token=self._telegram.bot_token,
+            chat_id=self._telegram.chat_id,
+            safety_ref=self._safety_limits,
+            orchestrator_ref=self,
+        )
+        logger.info("Telegram commands enabled: /kill, /resume, /status")
+
     def set_data_provider(self, provider: Callable) -> None:
         """Set callback to fetch market data for an asset.
 
@@ -500,6 +516,20 @@ class Orchestrator:
     def get_execution_agent(self) -> Optional[ExecutionAgent]:
         """Return the execution agent (for external wiring, e.g. reconciliation)."""
         return self._execution_agent
+
+    async def cancel_pending_orders(self) -> None:
+        """Cancel all pending orders on exchanges. Called during graceful shutdown."""
+        if not self._execution_agent:
+            return
+        connectors = getattr(self._execution_agent, '_connectors', {})
+        for name, connector in connectors.items():
+            try:
+                open_orders = connector.fetch_open_orders()
+                for order in open_orders:
+                    connector.cancel_order(order['id'], order.get('symbol'))
+                    logger.info("Cancelled order %s on %s", order['id'], name)
+            except Exception as e:
+                logger.error("Error cancelling orders on %s: %s", name, e)
 
     async def run(self) -> None:
         """Start the main scan loop. Runs until stop() is called."""
@@ -632,6 +662,15 @@ class Orchestrator:
                 self._safety_limits.activate_kill_switch(reason)
                 logger.critical("FILE-BASED KILL SWITCH DETECTED: %s", kill_file)
             return  # Skip this scan cycle
+
+        # Poll for Telegram commands
+        if self._telegram_commands and self._telegram:
+            try:
+                await self._telegram_commands.poll_updates(
+                    self._telegram.send_alert_async
+                )
+            except Exception as e:
+                logger.debug("Telegram command poll error: %s", e)
 
         self._scan_count += 1
         self._last_scan_time = datetime.utcnow()

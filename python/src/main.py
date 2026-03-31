@@ -289,6 +289,30 @@ async def run_system(
         except asyncio.CancelledError:
             pass
 
+    # Cancel pending orders (live mode only)
+    if orchestrator._execution_agent and not orchestrator._paper_mode:
+        try:
+            await orchestrator.cancel_pending_orders()
+            logger.info("Pending orders cancelled")
+        except Exception as e:
+            logger.error("Error cancelling orders during shutdown: %s", e)
+
+    # Persist position state
+    if orchestrator._execution_agent:
+        try:
+            orchestrator._execution_agent.persist_positions()
+            logger.info("Position state persisted to disk")
+        except Exception as e:
+            logger.error("Error persisting positions: %s", e)
+
+    # Log open positions (don't close — stops are in place)
+    positions = getattr(orchestrator._execution_agent, '_positions', {})
+    if positions:
+        logger.info("Open positions at shutdown (%d):", len(positions))
+        for asset, pos in positions.items():
+            logger.info("  %s: %s %.6f @ $%.2f (stop: $%.2f)",
+                       asset, pos.side, pos.size, pos.entry_price, pos.stop_loss)
+
     # Stop WebSocket manager
     if ws_manager is not None:
         logger.info("Stopping WebSocket manager...")
