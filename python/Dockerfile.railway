@@ -1,0 +1,42 @@
+# =============================================================================
+# AIFred Trading Engine — Railway Deployment Dockerfile
+# Lightweight build: no TA-Lib C library, no torch/tensorflow
+# =============================================================================
+
+FROM python:3.12-slim
+
+# Install minimal runtime deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies (lightweight set)
+COPY requirements-railway.txt /app/requirements-railway.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-railway.txt
+
+# Copy source code and config
+COPY src/ /app/src/
+COPY paper_trading.py /app/paper_trading.py
+COPY health_server.py /app/health_server.py
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Create data/logs dirs
+RUN mkdir -p /app/data /app/logs && chmod 777 /app/data /app/logs
+
+# Python config
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Railway injects $PORT; health server listens there
+EXPOSE 8080
+
+# Health check against the HTTP server
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -sf http://localhost:${PORT:-8080}/health || exit 1
+
+# Start both the health server and the paper trading loop
+CMD ["/app/start.sh"]

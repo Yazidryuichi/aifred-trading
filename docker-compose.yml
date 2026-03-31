@@ -1,0 +1,77 @@
+# =============================================================================
+# AIFred Trading Platform — Docker Compose
+# Runs the Python trading engine as a persistent long-running process.
+# The Next.js dashboard is deployed separately on Vercel.
+#
+# Usage:
+#   cp .env.docker .env          # Fill in your API keys
+#   docker compose up -d         # Start in background
+#   docker compose logs -f       # Tail logs
+#   docker compose down          # Stop gracefully
+# =============================================================================
+
+services:
+  trading-engine:
+    build:
+      context: ./python
+      dockerfile: Dockerfile
+    container_name: aifred-trading-engine
+    restart: unless-stopped
+
+    # Mount persistent storage for SQLite databases and log files
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+    # Load API keys and secrets from .env file
+    env_file:
+      - .env
+
+    # Pass individual environment variables (these reference .env values)
+    environment:
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - ALPACA_API_KEY=${ALPACA_API_KEY:-}
+      - ALPACA_API_SECRET=${ALPACA_API_SECRET:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - HYPERLIQUID_ADDRESS=${HYPERLIQUID_ADDRESS:-}
+      - HYPERLIQUID_PRIVATE_KEY=${HYPERLIQUID_PRIVATE_KEY:-}
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - DRY_RUN=${DRY_RUN:-false}
+
+    # Healthcheck: ensure the trading process is alive
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "python -m src.main"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    # Resource limits to prevent runaway memory/CPU usage
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+
+    # Allow the process to handle SIGTERM gracefully (30s before SIGKILL)
+    stop_grace_period: 30s
+
+    networks:
+      - trading-net
+
+    # Log rotation to prevent unbounded log growth
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  trading-net:
+    driver: bridge
