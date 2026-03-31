@@ -159,6 +159,38 @@ class ExecutionAgent:
                 error=f"safety_limit: {safety_reason}",
             )
 
+        # Pre-trade balance check (live mode only)
+        if not self._paper_mode and not self._dry_run:
+            min_balance = self.config.get("risk", {}).get("min_account_balance", 50.0)
+            try:
+                balance_info = self.get_account_balance()
+                free_balance = balance_info.get("free_usd", 0.0)
+                if free_balance < min_balance:
+                    msg = f"balance_too_low: ${free_balance:.2f} < ${min_balance:.2f} minimum"
+                    logger.warning("BALANCE CHECK FAILED: %s", msg)
+                    return TradeResult(
+                        proposal=proposal,
+                        status=TradeStatus.REJECTED,
+                        error=msg,
+                    )
+                if free_balance < proposal.position_value * 1.05:  # 5% buffer for fees
+                    msg = (f"insufficient_balance: ${free_balance:.2f} < "
+                           f"${proposal.position_value * 1.05:.2f} (position + fees)")
+                    logger.warning("BALANCE CHECK FAILED: %s", msg)
+                    return TradeResult(
+                        proposal=proposal,
+                        status=TradeStatus.REJECTED,
+                        error=msg,
+                    )
+                logger.info("Balance check passed: $%.2f free", free_balance)
+            except Exception as e:
+                logger.error("Balance check failed with error: %s", e)
+                return TradeResult(
+                    proposal=proposal,
+                    status=TradeStatus.REJECTED,
+                    error=f"balance_check_error: {e}",
+                )
+
         # Pre-execution safety checks
         passed, reason = self.safety.pre_execution_check(
             proposal, risk_decision, portfolio,
