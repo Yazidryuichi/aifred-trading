@@ -453,15 +453,17 @@ def main() -> int:
         log_fn("  Validation %-30s: %s — %s", result.check,
                "PASS" if result.passed else "FAIL", result.message)
 
-    if not report.all_passed and config.get("execution", {}).get("mode") == "live":
-        logger.error("CREDENTIAL VALIDATION FAILED — cannot start live trading")
-        logger.error("Failed checks: %s",
-                     ", ".join(r.check for r in report.critical_failures))
-        logger.error("Fix credentials or switch to paper mode with --mode paper")
-        return 1
+    if args.mode == "live" and not report.all_passed:
+        logger.critical(
+            "LIVE MODE BLOCKED: Credential validation failed. "
+            "Fix the issues above before trading with real money."
+        )
+        for failure in report.critical_failures:
+            logger.critical("  CRITICAL: %s — %s", failure.check, failure.message)
+        sys.exit(1)
 
-    logger.info("Pre-flight validation complete: %s",
-                "ALL PASSED" if report.all_passed else "PASSED (paper mode)")
+    if args.mode == "live" and report.all_passed:
+        logger.info("LIVE MODE VALIDATED: All credential checks passed")
 
     # Wire up components and run in async context
     loop = asyncio.new_event_loop()
