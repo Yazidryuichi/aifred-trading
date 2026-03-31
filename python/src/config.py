@@ -25,11 +25,23 @@ def _resolve_env_vars(value: Any) -> Any:
     return value
 
 
-def load_config(config_path: str = None, env_file: str = ".env") -> Dict[str, Any]:
+def merge_configs(base: dict, overlay: dict) -> dict:
+    """Deep merge overlay into base. Overlay values win."""
+    merged = base.copy()
+    for key, value in overlay.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = merge_configs(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_config(config_path: str = None, overlay_path: str = None, env_file: str = ".env") -> Dict[str, Any]:
     """Load configuration from YAML file with environment variable resolution.
 
     Args:
         config_path: Path to YAML config file. Defaults to src/config/default.yaml.
+        overlay_path: Optional path to overlay YAML that merges on top of base config.
         env_file: Path to .env file for environment variables.
 
     Returns:
@@ -42,6 +54,12 @@ def load_config(config_path: str = None, env_file: str = ".env") -> Dict[str, An
 
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
+
+    if overlay_path and os.path.exists(overlay_path):
+        with open(overlay_path) as f:
+            overlay = yaml.safe_load(f)
+        if overlay:
+            config = merge_configs(config, overlay)
 
     config = _resolve_env_vars(config)
     return config

@@ -1,0 +1,61 @@
+# AIFred Trading System — Live Mode Config Overlay
+# Merges on top of default.yaml when --mode live is used
+# All values here TIGHTEN defaults for safety with micro capital ($100-500)
+
+system:
+  mode: "live"
+
+assets:
+  crypto:
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "SOL/USDT"
+  stocks: []
+  forex: []
+
+orchestrator:
+  min_confidence_threshold: 85
+  max_daily_trades: 8
+
+risk:
+  max_position_pct: 10.0
+  max_concurrent_positions: 2
+  max_single_trade_loss: 15.0
+  min_account_balance: 50.0
+
+safety:
+  daily_loss_limit_pct: 2.0
+  weekly_loss_limit_pct: 5.0
+  max_position_pct: 5.0
+  max_exposure_pct: 30.0
+  max_positions: 2
+
+execution:
+  mode: "live"
+  exchanges:
+    binance:
+      enabled: false
+    alpaca:
+      enabled: false
+  hyperliquid:
+    enabled: true
+    testnet: false
+    default_leverage: 2
+    max_leverage: 2
+
+validation:
+  min_balance_usd: 50
+  required_exchanges: []
+
+monitoring:
+  telegram:
+    enabled: true
+    heartbeat_interval: 1800
+    daily_report_hour: 0
+    alerts:
+      trade_executed: true
+      position_closed: true
+      stop_loss_hit: true
+      safety_triggered: true
+      system_error: true
+      drawdown_warning: true
