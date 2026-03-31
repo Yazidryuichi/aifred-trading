@@ -1,6 +1,6 @@
 # AIFred Trading System — Live Mode Config Overlay
 # Merges on top of default.yaml when --mode live is used
-# All values here TIGHTEN defaults for safety with micro capital ($100-500)
+# All values here TIGHTEN defaults for safety with micro capital ($10+)
 
 system:
   mode: "live"
@@ -20,8 +20,8 @@ orchestrator:
 risk:
   max_position_pct: 10.0
   max_concurrent_positions: 2
-  max_single_trade_loss: 15.0
-  min_account_balance: 50.0
+  max_single_trade_loss: 2.0
+  min_account_balance: 5.0
 
 safety:
   daily_loss_limit_pct: 2.0
@@ -44,7 +44,7 @@ execution:
     max_leverage: 2
 
 validation:
-  min_balance_usd: 50
+  min_balance_usd: 5
   required_exchanges: []
 
 monitoring:
