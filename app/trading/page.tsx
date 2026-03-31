@@ -2,6 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { Component, type ReactNode } from "react";
+import { AccountSummaryBar } from "@/components/AccountSummaryBar";
+import { KillSwitchButton } from "@/components/KillSwitchButton";
+import { SystemHealthDot } from "@/components/SystemHealthDot";
+import { LivePositionsPanel } from "@/components/LivePositionsPanel";
+import { TradeFeed } from "@/components/TradeFeed";
 
 // Error boundary to catch and display client-side errors
 class ErrorBoundary extends Component<
@@ -44,18 +49,11 @@ class ErrorBoundary extends Component<
 }
 
 const TradingDashboard = dynamic(
-  () => import("@/components/trading/TradingDashboard"),
+  () => import("@/components/trading/TradingDashboard").then(m => m.default || m),
   {
     ssr: false,
     loading: () => (
-      <div className="min-h-screen bg-[#06060a] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-          <span className="text-zinc-500 text-sm font-mono tracking-wider">
-            LOADING SYSTEMS...
-          </span>
-        </div>
-      </div>
+      <div className="p-8 text-gray-400">Loading dashboard...</div>
     ),
   }
 );
@@ -63,7 +61,23 @@ const TradingDashboard = dynamic(
 export default function TradingPage() {
   return (
     <ErrorBoundary>
-      <TradingDashboard />
+      <div className="min-h-screen">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold text-white">AIFred Trading</h1>
+            <SystemHealthDot />
+          </div>
+          <KillSwitchButton />
+        </div>
+        <AccountSummaryBar />
+        <div className="p-4 space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <LivePositionsPanel />
+            <TradeFeed />
+          </div>
+          <TradingDashboard />
+        </div>
+      </div>
     </ErrorBoundary>
   );
 }
