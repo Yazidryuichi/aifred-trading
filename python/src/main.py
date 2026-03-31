@@ -458,7 +458,7 @@ def main() -> int:
         log_fn("  Agent %-20s: %s", agent_name, status_str)
 
     # Check critical agents
-    critical_agents = ["technical", "risk", "execution"]
+    critical_agents = ["risk", "execution"]
     failed_critical = [a for a in critical_agents if not agent_status.get(a, False)]
     if failed_critical:
         logger.error(
