@@ -15,6 +15,10 @@ fi
 echo "[start.sh] Starting AIFred Trading Engine on Railway"
 echo "[start.sh] PORT=${PORT:-8080}"
 echo "[start.sh] mode=$MODE, dry_run=$DRY_RUN"
+echo "[start.sh] Contents of /app/src/:"
+ls -la /app/src/ 2>&1
+echo "[start.sh] src/data exists?"
+ls -la /app/src/data/ 2>&1 || echo "[start.sh] src/data/ MISSING!"
 
 # Start the health/status HTTP server FIRST — it's lightweight and starts in <2s
 python health_server.py &
