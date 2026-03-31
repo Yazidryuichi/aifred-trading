@@ -17,12 +17,8 @@ COPY requirements-railway.txt /app/requirements-railway.txt
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements-railway.txt
 
-# Copy source code and config (explicit per-directory to avoid .dockerignore issues)
+# Copy source code and config
 COPY src/ /app/src/
-COPY src/data/ /app/src/data/
-COPY src/monitoring/ /app/src/monitoring/
-COPY src/risk/ /app/src/risk/
-COPY src/utils/ /app/src/utils/
 COPY paper_trading.py /app/paper_trading.py
 COPY health_server.py /app/health_server.py
 COPY start.sh /app/start.sh
