@@ -36,5 +36,8 @@ apscheduler>=3.10.4
 # Logging
 structlog>=23.2.0
 
+# Telegram alerts
+python-telegram-bot>=21.0
+
 # Health server
 aiohttp>=3.9.0
