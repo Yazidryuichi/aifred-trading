@@ -32,6 +32,8 @@ Thumbs.db
 # Data (mounted as volumes, not baked into image — root level only)
 /data/
 /logs/
+# But never ignore src/data (Python module)
+!src/data/
 
 # Build artifacts
 *.egg-info/
