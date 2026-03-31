@@ -852,7 +852,10 @@ export default function TradingDashboard() {
     );
   }
 
-  const { summary } = data;
+  const summary = data.summary ?? {
+    totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
+    avgConfidence: 0, signalCount: 0, activeStrategies: 0,
+  };
   const isPositive = summary.totalPnl >= 0;
 
   return (
@@ -2168,7 +2171,10 @@ function OverviewTab({
   data: TradingData;
   onNavigateActivity: () => void;
 }) {
-  const { summary } = data;
+  const summary = data.summary ?? {
+    totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
+    avgConfidence: 0, signalCount: 0, activeStrategies: 0,
+  };
   const isPositive = summary.totalPnl >= 0;
   const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
 
