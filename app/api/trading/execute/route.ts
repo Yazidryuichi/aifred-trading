@@ -222,53 +222,136 @@ async function executeLiveTrade(
     throw new Error(`ccxt does not have exchange "${exchangeId}"`);
   }
 
-  // 3. Create exchange instance
-  const exchange = new ExchangeClass({
-    apiKey: creds.api_key || creds.apiKey,
-    secret: creds.api_secret || creds.secret,
-    password: creds.passphrase || creds.password,
-    enableRateLimit: true,
-    timeout: 15000,
-    // Coinbase requires price for market buy orders — disable this requirement
-    // and pass quantity as the amount of base currency to buy
-    options: {
-      createMarketBuyOrderRequiresPrice: false,
-    },
-  });
+  // 3. Prepare credentials — normalize PEM format for CDP EC private keys
+  let apiSecret = creds.api_secret || creds.secret || "";
+  if (apiSecret.includes("BEGIN EC PRIVATE KEY")) {
+    // Always normalize PEM: strip all whitespace/newlines from body, rebuild proper format
+    const pemBody = apiSecret
+      .replace(/-----BEGIN EC PRIVATE KEY-----/g, "")
+      .replace(/-----END EC PRIVATE KEY-----/g, "")
+      .replace(/[\s\r\n]+/g, "");
+    // Rebuild PEM with proper 64-char line wrapping
+    const lines: string[] = [];
+    for (let i = 0; i < pemBody.length; i += 64) {
+      lines.push(pemBody.slice(i, i + 64));
+    }
+    apiSecret = `-----BEGIN EC PRIVATE KEY-----\n${lines.join("\n")}\n-----END EC PRIVATE KEY-----\n`;
+  }
 
-  // 4. Place order
-  let order: Order;
+  // 4. Create exchange instance
+  const exchangeConfig: Record<string, unknown> = {
+    apiKey: creds.api_key || creds.apiKey,
+    secret: apiSecret,
+    enableRateLimit: true,
+    timeout: 30000,
+  };
+  // Only pass password if it exists (not needed for CDP keys)
+  if (creds.passphrase || creds.password) {
+    exchangeConfig.password = creds.passphrase || creds.password;
+  }
+
+  const exchange = new ExchangeClass(exchangeConfig);
+
+  // 5. Diagnostic steps — track each stage for debugging
+  const diagnostics: string[] = [];
+
+  // Step A: Load markets
+  try {
+    await exchange.loadMarkets();
+    diagnostics.push("loadMarkets: OK");
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Step loadMarkets failed: ${msg}`);
+  }
+
   const normalizedSymbol = normalizeSymbol(symbol);
+
+  // Step B: Verify market exists
+  const market = exchange.market(normalizedSymbol);
+  if (!market) {
+    throw new Error(`Market ${normalizedSymbol} not found on ${brokerId}. Available: ${Object.keys(exchange.markets).slice(0, 10).join(", ")}...`);
+  }
+  diagnostics.push(`market: ${market.id} (${market.type})`);
+
+  // Step C: For Coinbase, try to fetch accounts to verify access
+  let orderParams: Record<string, unknown> = {};
+  if (exchangeId === "coinbase") {
+    // Try fetching balance to verify account access
+    try {
+      const balance = await exchange.fetchBalance();
+      const currencies = Object.keys(balance.total || {}).filter(k => (balance.total as Record<string, number>)[k] > 0);
+      diagnostics.push(`fetchBalance: OK (${currencies.length > 0 ? currencies.join(", ") : "no funds"})`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diagnostics.push(`fetchBalance: FAILED (${msg.slice(0, 100)})`);
+    }
+
+    // Try fetching portfolios
+    try {
+      const portfolios = await exchange.fetchPortfolios();
+      if (portfolios && portfolios.length > 0) {
+        diagnostics.push(`fetchPortfolios: OK (${portfolios.length} portfolios, using: ${portfolios[0].id})`);
+        orderParams.retail_portfolio_id = portfolios[0].id;
+      } else {
+        diagnostics.push("fetchPortfolios: OK but empty");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      diagnostics.push(`fetchPortfolios: FAILED (${msg.slice(0, 100)})`);
+      // Don't pass portfolio ID — let Coinbase use default
+    }
+  }
+
+  // 6. Place order
+  let order: Order;
 
   try {
     if (orderType === "market") {
-      if (side === "buy" && (exchangeId === "coinbase" || exchangeId === "coinbasepro")) {
-        // Coinbase market buys: pass cost in quote currency (e.g., $10 worth of BTC)
-        // Fetch current price to calculate cost
+      if (side === "buy" && exchangeId === "coinbase") {
+        // Coinbase spot market buy needs quote_size (USD cost)
+        // Must pass price so ccxt calculates cost = amount * price
         let price = limitPrice;
         if (!price) {
           try {
             const ticker = await exchange.fetchTicker(normalizedSymbol);
             price = ticker.last || ticker.close || 0;
-          } catch {
+            diagnostics.push(`fetchTicker: OK (price=${price})`);
+          } catch (e: unknown) {
+            diagnostics.push(`fetchTicker: FAILED (${(e instanceof Error ? e.message : String(e)).slice(0, 80)})`);
             price = 0;
           }
         }
+
         if (price && price > 0) {
-          const cost = quantity * price;
-          order = await exchange.createOrder(normalizedSymbol, "market", side, cost);
+          // Method 1: pass price so ccxt calculates cost internally
+          diagnostics.push(`createOrder: market buy ${quantity} @ ${price}, params=${JSON.stringify(orderParams)}`);
+          order = await exchange.createOrder(
+            normalizedSymbol, "market", side, quantity, price, orderParams,
+          );
         } else {
-          // Fallback: set createMarketBuyOrderRequiresPrice to false already set
-          order = await exchange.createOrder(normalizedSymbol, "market", side, quantity);
+          // Method 2: pass cost directly as a param
+          // Use a small USD amount as fallback
+          const fallbackCost = quantity * 87000; // rough BTC price
+          diagnostics.push(`createOrder: market buy cost=$${fallbackCost.toFixed(2)}, params=${JSON.stringify(orderParams)}`);
+          order = await exchange.createOrder(
+            normalizedSymbol, "market", side, fallbackCost, undefined,
+            { ...orderParams, createMarketBuyOrderRequiresPrice: false },
+          );
         }
       } else {
-        order = await exchange.createOrder(normalizedSymbol, "market", side, quantity);
+        diagnostics.push(`createOrder: market ${side} ${quantity} ${normalizedSymbol}`);
+        order = await exchange.createOrder(
+          normalizedSymbol, "market", side, quantity, undefined, orderParams,
+        );
       }
     } else {
       if (!limitPrice) {
         throw new Error("Limit price is required for limit orders");
       }
-      order = await exchange.createOrder(normalizedSymbol, "limit", side, quantity, limitPrice);
+      diagnostics.push(`createOrder: limit ${side} ${quantity} @ ${limitPrice}`);
+      order = await exchange.createOrder(
+        normalizedSymbol, "limit", side, quantity, limitPrice, orderParams,
+      );
     }
   } catch (err: unknown) {
     // Re-throw with more context for specific ccxt error types
@@ -290,7 +373,9 @@ async function executeLiveTrade(
     if (err instanceof ccxt.NetworkError) {
       throw new Error(`Network error connecting to ${brokerId}. Please check connectivity and try again.`);
     }
-    throw err;
+    // Include diagnostics in error for debugging
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    throw new Error(`${rawMsg}\n\n[Diagnostics] ${diagnostics.join(" → ")}`);
   }
 
   // 5. Return normalized result

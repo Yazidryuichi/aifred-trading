@@ -49,7 +49,7 @@ function appendActivity(entry: {
 interface CredentialField {
   key: string;
   label: string;
-  type: "text" | "password";
+  type: "text" | "password" | "textarea";
   optional?: boolean;
 }
 
@@ -89,7 +89,7 @@ const BROKER_REGISTRY: BrokerDefinition[] = [
     ],
     requiredCredentials: [
       { key: "api_key", label: "API Key Name", type: "text" },
-      { key: "api_secret", label: "API Secret", type: "password" },
+      { key: "api_secret", label: "API Secret (PEM Private Key)", type: "textarea" },
     ],
   },
   {
@@ -269,7 +269,7 @@ async function revalidateBroker(
 
     const EXCHANGE_MAP: Record<string, string> = {
       binance: "binance",
-      coinbase: "coinbasepro",
+      coinbase: "coinbase",
       kraken: "kraken",
       bybit: "bybit",
     };
@@ -278,12 +278,27 @@ async function revalidateBroker(
 
     if (ccxt && exchangeName && ccxt[exchangeName]) {
       const ExchangeClass = ccxt[exchangeName];
+
+      // Normalize PEM for CDP keys
+      let secret = creds.api_secret || creds.secret || "";
+      if (secret.includes("BEGIN EC PRIVATE KEY")) {
+        const pemBody = secret
+          .replace(/-----BEGIN EC PRIVATE KEY-----/g, "")
+          .replace(/-----END EC PRIVATE KEY-----/g, "")
+          .replace(/[\s\r\n]+/g, "");
+        const lines: string[] = [];
+        for (let i = 0; i < pemBody.length; i += 64) {
+          lines.push(pemBody.slice(i, i + 64));
+        }
+        secret = `-----BEGIN EC PRIVATE KEY-----\n${lines.join("\n")}\n-----END EC PRIVATE KEY-----\n`;
+      }
+
       const exchange = new ExchangeClass({
         apiKey: creds.api_key || creds.apiKey,
-        secret: creds.api_secret || creds.secret,
+        secret: secret,
         password: creds.passphrase || creds.password,
         enableRateLimit: true,
-        timeout: 10000,
+        timeout: 15000,
       });
       await exchange.fetchBalance();
       return true;
