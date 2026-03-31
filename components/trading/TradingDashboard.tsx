@@ -2188,7 +2188,16 @@ function OverviewTab({
           const localTrades = JSON.parse(
             localStorage.getItem("aifred_local_trades") || "[]"
           );
-          const merged = [...localTrades, ...serverList];
+          // Sanitize entries — ensure they have required fields
+          const sanitize = (e: Record<string, unknown>) => ({
+            ...e,
+            id: e.id || `gen_${Math.random().toString(36).slice(2, 8)}`,
+            message: typeof e.message === "string" ? e.message : (e.title || e.asset || "Trade") as string,
+            type: e.type || "trade_executed",
+            severity: e.severity || "info",
+            timestamp: e.timestamp || new Date().toISOString(),
+          });
+          const merged = [...localTrades.map(sanitize), ...serverList.map(sanitize)];
           const seen = new Set<string>();
           const deduped = merged.filter((e) => {
             if (seen.has(e.id)) return false;
