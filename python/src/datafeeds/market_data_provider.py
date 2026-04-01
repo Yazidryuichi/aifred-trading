@@ -357,22 +357,39 @@ class MarketDataProvider:
         return self._oanda_exchange
 
     def _fetch_crypto(self, asset: str, timeframe: str) -> Optional[pd.DataFrame]:
-        """Fetch crypto OHLCV via ccxt."""
+        """Fetch crypto OHLCV via ccxt, with Hyperliquid fallback."""
         import ccxt as ccxt_lib
 
         exchange = self._get_ccxt_exchange()
 
+        ohlcv = None
         try:
             ohlcv = exchange.fetch_ohlcv(
                 asset, timeframe=timeframe, limit=self._min_candles
             )
-        except (ccxt_lib.NetworkError, ccxt_lib.ExchangeNotAvailable) as e:
-            logger.warning("Network error fetching %s from %s: %s",
-                           asset, self._default_exchange, e)
-            return None
+        except (ccxt_lib.NetworkError, ccxt_lib.ExchangeNotAvailable,
+                ccxt_lib.ExchangeError) as e:
+            logger.warning("Primary exchange %s failed for %s: %s",
+                           self._default_exchange, asset, e)
         except ccxt_lib.BadSymbol:
             logger.warning("Symbol %s not found on %s", asset, self._default_exchange)
-            return None
+
+        # Fallback: Hyperliquid via ccxt (not geo-blocked)
+        if not ohlcv and self._default_exchange != "hyperliquid":
+            try:
+                if not hasattr(self, "_hl_fallback"):
+                    self._hl_fallback = ccxt_lib.hyperliquid({
+                        "enableRateLimit": True, "timeout": 30000,
+                    })
+                # Hyperliquid uses SYMBOL/USDC:USDC format for perps
+                hl_symbol = asset.replace("/USDT", "/USDC:USDC")
+                ohlcv = self._hl_fallback.fetch_ohlcv(
+                    hl_symbol, timeframe=timeframe, limit=self._min_candles
+                )
+                logger.info("Fetched %d candles for %s via Hyperliquid fallback",
+                            len(ohlcv) if ohlcv else 0, asset)
+            except Exception as hl_err:
+                logger.warning("Hyperliquid fallback failed for %s: %s", asset, hl_err)
 
         if not ohlcv:
             return None
