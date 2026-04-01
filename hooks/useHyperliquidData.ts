@@ -10,11 +10,19 @@ export interface HLPosition {
   leverage: number;
 }
 
+export interface SpotBalance {
+  coin: string;
+  total: number;
+  hold: number;
+}
+
 export interface HyperliquidData {
   equity: number;
   availableBalance: number;
   marginUsed: number;
   positions: HLPosition[];
+  spotBalances: SpotBalance[];
+  portfolioValue: number; // perps equity + spot USDC value
   connected: boolean;
 }
 
@@ -34,22 +42,30 @@ function getStaticAddress(): string | null {
 }
 
 async function fetchHyperliquidState(address: string): Promise<HyperliquidData> {
-  const res = await fetch("https://api.hyperliquid.xyz/info", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type: "clearinghouseState",
-      user: address,
+  // Fetch perps and spot in parallel
+  const [perpsRes, spotRes] = await Promise.all([
+    fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "clearinghouseState", user: address }),
     }),
-  });
+    fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "spotClearinghouseState", user: address }),
+    }),
+  ]);
 
-  if (!res.ok) {
-    throw new Error(`Hyperliquid API HTTP ${res.status}`);
+  if (!perpsRes.ok) {
+    throw new Error(`Hyperliquid API HTTP ${perpsRes.status}`);
   }
 
-  const data = await res.json();
+  const [perpsData, spotData] = await Promise.all([
+    perpsRes.json(),
+    spotRes.ok ? spotRes.json() : { balances: [] },
+  ]);
 
-  const positions: HLPosition[] = (data.assetPositions || [])
+  const positions: HLPosition[] = (perpsData.assetPositions || [])
     .filter(
       (p: Record<string, Record<string, string>>) =>
         parseFloat(p.position?.szi || "0") !== 0,
@@ -68,11 +84,32 @@ async function fetchHyperliquidState(address: string): Promise<HyperliquidData> 
       }),
     );
 
+  // Parse spot balances
+  const spotBalances: SpotBalance[] = (spotData.balances || [])
+    .map((b: Record<string, string>) => ({
+      coin: b.coin || "?",
+      total: parseFloat(b.total || "0"),
+      hold: parseFloat(b.hold || "0"),
+    }))
+    .filter((b: SpotBalance) => b.total > 0);
+
+  // Compute total spot USD value (USDC, USDT0, USDE, USDH are all ~$1)
+  const stableCoins = ["USDC", "USDT", "USDT0", "USDE", "USDH", "DAI"];
+  const spotUsdValue = spotBalances.reduce((sum: number, b: SpotBalance) => {
+    if (stableCoins.includes(b.coin.toUpperCase())) return sum + b.total;
+    return sum; // non-stable spot tokens would need price lookup — skip for now
+  }, 0);
+
+  const perpsEquity = parseFloat(perpsData.marginSummary?.accountValue || "0");
+  const portfolioValue = perpsEquity + spotUsdValue;
+
   return {
-    equity: parseFloat(data.marginSummary?.accountValue || "0"),
-    availableBalance: parseFloat(data.withdrawable || "0"),
-    marginUsed: parseFloat(data.marginSummary?.totalMarginUsed || "0"),
+    equity: perpsEquity,
+    availableBalance: parseFloat(perpsData.withdrawable || "0") + spotUsdValue,
+    marginUsed: parseFloat(perpsData.marginSummary?.totalMarginUsed || "0"),
     positions,
+    spotBalances,
+    portfolioValue,
     connected: true,
   };
 }

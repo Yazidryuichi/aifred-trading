@@ -24,7 +24,7 @@ export function AccountSummaryBar() {
   const useHL = !!hlData;
 
   const balance = useHL
-    ? hlData.equity
+    ? hlData.portfolioValue
     : (performance?.summary?.currentEquity ?? 0);
 
   const hlTotalPnl = useHL

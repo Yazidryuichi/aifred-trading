@@ -7,7 +7,7 @@ export function TradingModeBanner() {
 
   // Determine mode from actual Hyperliquid state — not from system-health API
   const hlData = hl.data;
-  const isLive = !!hlData && (hlData.equity > 0 || hlData.positions.length > 0);
+  const isLive = !!hlData && (hlData.portfolioValue > 0 || hlData.positions.length > 0);
 
   return (
     <div
