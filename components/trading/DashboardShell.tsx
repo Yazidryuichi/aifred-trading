@@ -4,6 +4,7 @@ import { HeroMetrics } from "@/components/trading/HeroMetrics";
 import { EquityCurve } from "@/components/trading/EquityCurve";
 import { PositionsTable } from "@/components/trading/PositionsTable";
 import { LiveStatusPanel } from "@/components/trading/LiveStatusPanel";
+import { RecentDecisions } from "@/components/trading/RecentDecisions";
 import { useViewMode } from "@/stores/viewMode";
 
 export function DashboardShell() {
@@ -20,20 +21,7 @@ export function DashboardShell() {
           <EquityCurve />
         </div>
         <div className="lg:col-span-2">
-          <div className="bg-white/5 border border-white/10 rounded-xl p-5 h-full flex flex-col">
-            <h3
-              className="text-sm font-semibold text-zinc-300 mb-3"
-              style={{ fontFamily: "Outfit, sans-serif" }}
-            >
-              Recent Decisions
-            </h3>
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <p className="text-zinc-600 text-sm">AI Decision History</p>
-                <p className="text-zinc-700 text-xs mt-1">Coming in Sprint 2</p>
-              </div>
-            </div>
-          </div>
+          <RecentDecisions />
         </div>
       </div>
 

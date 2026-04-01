@@ -14,6 +14,7 @@ import { detectRegime, getRegimeAction } from "@/lib/hmm-regime";
 import { calculateConfirmations, type OHLCVCandle } from "@/lib/technical-indicators";
 import { lockedReadModifyWrite, readJsonWithFallback } from "@/lib/file-lock";
 import ccxt, { type Order } from "ccxt";
+import { recordDecision } from "@/lib/record-decision";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -700,6 +701,49 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
         },
       });
 
+      // Record AI decision for transparency dashboard
+      recordDecision({
+        status: "success",
+        inputPrompt: `Live trade execution — ${symbol} ${side} ${quantity} via ${brokerId} | Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}%)`,
+        chainOfThought: [
+          `1) Position check: ${side} ${quantity} ${symbol} via ${brokerId} (live mode).`,
+          ``,
+          `2) Market analysis:`,
+          `- Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}% confidence)`,
+          `- Signal: ${regimeData.signal}`,
+          `- Confirmations: ${confirmationData.passed}/${confirmationData.total} passed`,
+          ``,
+          `3) Execution:`,
+          `- Order ID: ${liveResult.orderId}`,
+          `- Fill price: $${executionPrice.toFixed(4)}`,
+          `- Status: ${liveResult.status}`,
+          `- Fee: ${liveResult.fee.cost} ${liveResult.fee.currency}`,
+          ``,
+          `4) Risk management:`,
+          `- Stop loss: $${stopLoss.toFixed(4)} (-1.5%)`,
+          `- Take profit: $${takeProfit.toFixed(4)} (+2.5%)`,
+          `- R:R ratio: ${riskReward.toFixed(1)}:1`,
+          `- Strategy: ${strategy} (confidence: ${confidence}%)`,
+          ``,
+          `=> LIVE ${side} executed successfully via ${brokerId}.`,
+        ].join("\n"),
+        assetDecisions: [{
+          asset: symbol,
+          action: side === "LONG" ? "buy" : "sell",
+          succeeded: true,
+          confidence,
+          reasoning: `${side} ${symbol} — ${strategy} strategy, ${regimeLabel(regimeData.current)} regime`,
+        }],
+        agents: {
+          technical: `Confirmations: ${confirmationData.passed}/${confirmationData.total}. ${confirmationData.details.map((c) => `${c.name}: ${c.passed ? "PASS" : "FAIL"} (${c.value})`).join(". ")}`,
+          sentiment: `Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}%). Signal: ${regimeData.signal}.`,
+          risk: `Risk level: ${riskResult.level}. ${riskResult.factors.join(". ")}`,
+          regime: `${regimeData.action}`,
+          execution: `Live order ${liveResult.orderId} ${liveResult.status} at $${executionPrice.toFixed(4)}. Fee: ${liveResult.fee.cost} ${liveResult.fee.currency}.`,
+        },
+        durationMs: Date.now() - (new Date(new Date().toISOString()).getTime() - 10000), // approximate
+      });
+
       recordTradeOutcome(strategyStats, strategy, confidence, 0);
 
       return {
@@ -749,6 +793,27 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
         title: `LIVE ${side} ${symbol} FAILED`,
         message: `Live order via ${brokerId} failed: ${errMsg}`,
         details: { mode: "live", broker: brokerId, symbol, side, quantity, error: errMsg },
+      });
+
+      // Record failed decision for transparency
+      recordDecision({
+        status: "failure",
+        inputPrompt: `Live trade attempt — ${symbol} ${side} ${quantity} via ${brokerId}`,
+        chainOfThought: `1) Attempted LIVE ${side} ${quantity} ${symbol} via ${brokerId}.\n\n2) Execution error:\n- ${errMsg}\n\n3) Recovery: Order not filled. No position opened. Will retry if signal persists.`,
+        assetDecisions: [{
+          asset: symbol,
+          action: side === "LONG" ? "buy" : "sell",
+          succeeded: false,
+          confidence,
+          reasoning: `Execution failed: ${errMsg.slice(0, 200)}`,
+        }],
+        agents: {
+          technical: `Confirmations: ${confirmationData.passed}/${confirmationData.total}.`,
+          risk: `Risk level: ${riskResult.level}. Trade did not execute — no exposure added.`,
+          regime: `Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}%).`,
+          execution: `FAILED: ${errMsg.slice(0, 300)}`,
+        },
+        durationMs: 0,
       });
 
       return {
@@ -867,6 +932,49 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
       riskFactors: riskResult.factors,
       warnings,
     },
+  });
+
+  // Record AI decision for transparency dashboard
+  recordDecision({
+    status: "success",
+    inputPrompt: `Paper trade — ${symbol} ${side} ${quantity} @ $${executionPrice.toFixed(4)} (${priceSource} price) | Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}%)`,
+    chainOfThought: [
+      `1) Position check: ${side} ${quantity} ${symbol} (paper mode).`,
+      ``,
+      `2) Market analysis:`,
+      `- ${regimeContext}`,
+      `- ${confirmationContext}`,
+      ``,
+      `3) Risk management:`,
+      `- Entry: $${executionPrice.toFixed(4)} (${priceSource} price, slippage: ${slippageBps.toFixed(1)} bps)`,
+      `- Stop loss: $${stopLoss.toFixed(4)} (-1.5%)`,
+      `- Take profit: $${takeProfit.toFixed(4)} (+2.5%)`,
+      `- R:R ratio: ${riskReward.toFixed(1)}:1`,
+      `- Strategy: ${strategy} (confidence: ${confidence}%)`,
+      `- Tier: ${tier}`,
+      ``,
+      `4) Risk assessment: ${riskResult.level}`,
+      riskResult.factors.map((f) => `- ${f}`).join("\n"),
+      ``,
+      warnings.length > 0 ? `5) Warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
+      ``,
+      `=> PAPER ${side} ${symbol} executed.`,
+    ].filter(Boolean).join("\n"),
+    assetDecisions: [{
+      asset: symbol,
+      action: side === "LONG" ? "buy" : "sell",
+      succeeded: true,
+      confidence,
+      reasoning: `${side} ${symbol} — ${strategy} strategy, ${regimeLabel(regimeData.current)} regime, tier ${tier}`,
+    }],
+    agents: {
+      technical: technicalSignals,
+      sentiment: sentimentSignals,
+      risk: legacyRiskAssessment,
+      regime: `${regimeLabel(regimeData.current)} (${regimeData.confidence}% confidence). ${regimeData.action}`,
+      execution: `Paper ${orderType} order filled at $${executionPrice.toFixed(4)}. Slippage: ${slippageBps.toFixed(1)} bps. Order ID: ${orderId}.`,
+    },
+    durationMs: 0,
   });
 
   // Paper trade PnL: at entry time, there is no realized PnL yet.

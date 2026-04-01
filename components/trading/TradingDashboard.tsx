@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   X,
   Activity,
+  BarChart3,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ConnectWallet } from "@/components/wallet/ConnectWallet";
@@ -285,6 +286,26 @@ export default function TradingDashboard() {
               >
                 <ArrowUpDown className="w-4 h-4" />
                 <span>Execute Trade</span>
+              </button>
+
+              {/* AI Decisions */}
+              <button
+                onClick={() => router.push("/trading/decisions")}
+                className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
+                title="AI Decisions"
+                aria-label="Open AI decision history"
+              >
+                <Brain className="w-4 h-4" />
+              </button>
+
+              {/* Stats */}
+              <button
+                onClick={() => router.push("/trading/stats")}
+                className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
+                title="Trading Stats"
+                aria-label="Open trading stats"
+              >
+                <BarChart3 className="w-4 h-4" />
               </button>
 
               {/* Settings */}
