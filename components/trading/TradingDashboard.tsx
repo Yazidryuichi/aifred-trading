@@ -1161,8 +1161,8 @@ export default function TradingDashboard() {
           {activeTab === "trades" && (
             <TradesTab
               key="trades"
-              trades={data.recentTrades}
-              openPositions={data.openPositions}
+              trades={data.recentTrades ?? []}
+              openPositions={data.openPositions ?? []}
               expandedTrade={expandedTrade}
               setExpandedTrade={setExpandedTrade}
             />
@@ -2152,7 +2152,7 @@ function LiveStatusPanel() {
 
           {systemHealth ? (
             <div className="space-y-2.5">
-              {systemHealth.components.map((comp) => {
+              {(systemHealth.components ?? []).map((comp) => {
                 const colors = HEALTH_COLORS[comp.status] || HEALTH_COLORS.down;
                 return (
                   <div key={comp.name} className="space-y-1">
@@ -2432,7 +2432,7 @@ function OverviewTab({
         </div>
         <div className="h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data.equityCurve}>
+            <AreaChart data={data.equityCurve ?? []}>
               <defs>
                 <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop
@@ -2522,7 +2522,7 @@ function OverviewTab({
             Performance by Strategy
           </h3>
           <div className="space-y-3">
-            {data.byStrategy
+            {(data.byStrategy ?? [])
               .sort((a, b) => b.pnl - a.pnl)
               .map((s) => (
                 <StrategyRow key={s.strategy} {...s} />
@@ -2545,7 +2545,7 @@ function OverviewTab({
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data.byTier.map((t) => ({
+                  data={(data.byTier ?? []).map((t) => ({
                     name: t.tier,
                     value: t.trades,
                   }))}
@@ -2557,7 +2557,7 @@ function OverviewTab({
                   dataKey="value"
                   stroke="none"
                 >
-                  {data.byTier.map((t, i) => (
+                  {(data.byTier ?? []).map((t, i) => (
                     <Cell
                       key={i}
                       fill={TIER_COLORS[t.tier] || "#6366f1"}
@@ -2577,7 +2577,7 @@ function OverviewTab({
             </ResponsiveContainer>
           </div>
           <div className="space-y-2">
-            {data.byTier
+            {(data.byTier ?? [])
               .sort((a, b) => {
                 const order = ["A+", "A", "B", "C"];
                 return order.indexOf(a.tier) - order.indexOf(b.tier);
