@@ -2816,8 +2816,18 @@ function ActivityTab() {
       const localTrades: ActivityEntry[] = JSON.parse(
         localStorage.getItem("aifred_local_trades") || "[]"
       );
+      // Sanitize entries — ensure title/message are strings, not objects
+      const sanitize = (e: Record<string, unknown>): ActivityEntry => ({
+        ...e,
+        id: (typeof e.id === "string" ? e.id : null) || `gen_${Math.random().toString(36).slice(2, 8)}`,
+        title: typeof e.title === "string" ? e.title : (typeof e.asset === "string" ? e.asset : "Trade"),
+        message: typeof e.message === "string" ? e.message : (typeof e.title === "string" ? e.title : (typeof e.asset === "string" ? e.asset : "Trade executed")),
+        type: (typeof e.type === "string" ? e.type : null) || "trade_executed",
+        severity: (typeof e.severity === "string" ? e.severity : null) || "info",
+        timestamp: (typeof e.timestamp === "string" ? e.timestamp : null) || new Date().toISOString(),
+      } as ActivityEntry);
       // Merge: local trades first, then server entries, deduplicate by id
-      const merged = [...localTrades, ...serverList];
+      const merged = [...localTrades.map(sanitize), ...serverList.map(sanitize)];
       const seen = new Set<string>();
       const deduped = merged.filter((e) => {
         if (seen.has(e.id)) return false;
