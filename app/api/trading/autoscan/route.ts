@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { detectRegime, MarketRegime } from "@/lib/hmm-regime";
 import { calculateConfirmations, type OHLCVCandle } from "@/lib/technical-indicators";
-import { loadStats, selectStrategy, computeConfidence } from "@/lib/strategy-learning";
+import { loadStats, selectStrategy, computeConfidence, recordTradeOutcome } from "@/lib/strategy-learning";
 import { executeTrade, type ExecuteTradeParams } from "@/lib/execute-trade";
 import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/lib/file-lock";
 
@@ -588,13 +588,19 @@ export async function POST(request: NextRequest) {
           const scanResult = allScanResults.find((r) => r.symbol === signal.symbol);
           const exitPrice = scanResult?.currentPrice ?? 0;
 
-          // Calculate realized PnL
+          // Calculate realized PnL using actual price data
           if (exitPrice > 0 && exitedPosition.entryPrice > 0) {
             const pnl =
               exitedPosition.side === "LONG"
                 ? (exitPrice - exitedPosition.entryPrice) * exitedPosition.quantity
                 : (exitedPosition.entryPrice - exitPrice) * exitedPosition.quantity;
             dailyPnl.pnl += pnl;
+
+            // Feed real PnL back to strategy learning system so it trains
+            // on actual price-based outcomes, not random noise.
+            const strategy = selectStrategy(strategyStats);
+            const confidence = computeConfidence(strategyStats, strategy);
+            recordTradeOutcome(strategyStats, strategy, confidence, pnl);
           }
 
           // Record exit time for cooldown

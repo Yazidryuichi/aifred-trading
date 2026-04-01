@@ -808,30 +808,25 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
     warnings.length > 0 ? `Warnings: ${warnings.join("; ")}` : "",
   ].filter(Boolean).join(" | ");
 
-  const rsiVal = side === "LONG"
-    ? (20 + Math.random() * 15).toFixed(1)
-    : (65 + Math.random() * 15).toFixed(1);
-  const volumeMult = (1.1 + Math.random() * 0.9).toFixed(2);
-  const sentimentScore = (0.55 + Math.random() * 0.4).toFixed(2);
-  const kellySize = (1.2 + Math.random() * 2.3).toFixed(1);
-  const fgIndex = Math.floor(35 + Math.random() * 40);
-  const fundingRate = side === "LONG"
-    ? `+${(0.005 + Math.random() * 0.02).toFixed(3)}%`
-    : `-${(0.005 + Math.random() * 0.015).toFixed(3)}%`;
+  // Technical & sentiment signal summaries use actual confirmation data
+  // instead of random numbers so logs/activity feed reflect reality.
+  const rsiDetail = confirmationData.details.find((c) => c.name.toLowerCase().includes("rsi"));
+  const rsiVal = rsiDetail ? rsiDetail.value.toFixed(1) : "N/A";
+  const volumeDetail = confirmationData.details.find((c) => c.name.toLowerCase().includes("volume"));
+  const volumeMult = volumeDetail ? volumeDetail.value.toFixed(2) : "N/A";
 
   const technicalSignals = [
-    `RSI(14): ${rsiVal} — ${Number(rsiVal) < 30 ? "oversold" : Number(rsiVal) > 70 ? "overbought" : "neutral"}`,
-    `MACD: ${side === "LONG" ? "bullish" : "bearish"} ${Math.random() > 0.5 ? "crossover confirmed" : "histogram expanding"}`,
-    `Volume: ${volumeMult}x 20-day average${Number(volumeMult) > 1.5 ? " (surge)" : ""}`,
-    `EMA: price ${side === "LONG" ? "above" : "below"} EMA20/50 ${Math.random() > 0.5 ? "golden cross" : "trend aligned"}`,
-    `ATR(14): ${(basePrice * (0.005 + Math.random() * 0.015)).toFixed(4)} (${Math.random() > 0.5 ? "normal" : "elevated"} volatility)`,
+    `RSI(14): ${rsiVal} — ${rsiDetail ? (rsiDetail.value < 30 ? "oversold" : rsiDetail.value > 70 ? "overbought" : "neutral") : "unavailable"}`,
+    `MACD: ${side === "LONG" ? "bullish" : "bearish"} — based on confirmation ${confirmationData.passed >= confirmationData.required ? "met" : "pending"}`,
+    `Volume: ${volumeMult !== "N/A" ? volumeMult + "x" : "N/A"} 20-day average`,
+    `EMA: price ${side === "LONG" ? "above" : "below"} EMA20/50 — confirmation ${confirmationData.passed >= confirmationData.required ? "aligned" : "pending"}`,
+    `Regime confidence: ${regimeData.confidence}%`,
   ].join(" | ");
 
   const sentimentSignals = [
-    `FinBERT: ${Number(sentimentScore) > 0.7 ? "strong" : "moderate"} ${side === "LONG" ? "bullish" : "bearish"} (${sentimentScore})`,
-    `Social consensus: ${side === "LONG" ? "positive" : "negative"} across ${Math.floor(3 + Math.random() * 5)} sources`,
-    `Fear & Greed: ${fgIndex}`,
-    `Funding rate: ${fundingRate}`,
+    `Regime: ${regimeLabel(regimeData.current)} (${regimeData.confidence}% confidence)`,
+    `Signal: ${regimeData.signal}`,
+    `Confirmations: ${confirmationData.passed}/${confirmationData.total} passed`,
   ].join(" | ");
 
   const legacyRiskAssessment = [
@@ -839,7 +834,7 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
     `Stop: ${stopLoss.toFixed(4)} (${side === "LONG" ? "-1.5%" : "+1.5%"})`,
     `TP: ${takeProfit.toFixed(4)} (${side === "LONG" ? "+2.5%" : "-2.5%"})`,
     `R:R: ${riskReward.toFixed(1)}:1`,
-    `Kelly size: ${kellySize}% of portfolio`,
+    `Position size: ${(quantity * executionPrice).toFixed(2)} USD`,
     `Max risk: $${(quantity * executionPrice * 0.015).toFixed(2)}`,
     `Confidence: ${confidence}%`,
   ].join(" | ");
@@ -874,13 +869,13 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
     },
   });
 
-  const outcomeRoll = Math.random() * 100;
-  const isSimulatedWin = outcomeRoll < confidence;
-  const simulatedPnl = isSimulatedWin
-    ? quantity * executionPrice * (0.005 + Math.random() * 0.02)
-    : -(quantity * executionPrice * (0.003 + Math.random() * 0.012));
+  // Paper trade PnL: at entry time, there is no realized PnL yet.
+  // Record 0 so the strategy learning system is not trained on random noise.
+  // Actual PnL is computed when the position is closed (autoscan exit path)
+  // using real price data: (exitPrice - entryPrice) * quantity * direction.
+  const entryPnl = 0;
 
-  recordTradeOutcome(strategyStats, strategy, confidence, simulatedPnl);
+  recordTradeOutcome(strategyStats, strategy, confidence, entryPnl);
 
   return {
     success: true,
