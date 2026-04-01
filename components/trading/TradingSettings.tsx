@@ -540,8 +540,8 @@ export default function TradingSettings() {
         const connBrokers = brokers.filter(b => b.status === 'connected');
         if (connBrokers.length > 0) {
           brokerId = connBrokers[0].id;
-          const creds = loadCredentials(connBrokers[0].id);
-          if (creds) brokerCreds = creds;
+          // Credentials are handled server-side by the autoscan API
+          brokerCreds = undefined;
         }
       }
 

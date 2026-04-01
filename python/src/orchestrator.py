@@ -1463,6 +1463,13 @@ class Orchestrator:
 
             win_rate, avg_win, avg_loss = self._calculate_recent_win_rate()
 
+            # Compute actual stop distance so position sizer uses real risk
+            stop_distance_pct = (
+                abs(entry_price - stop_loss) / entry_price
+                if entry_price > 0 and stop_loss > 0
+                else None
+            )
+
             position_value = calculate_position_size(
                 portfolio_value=portfolio_value,
                 signal_confidence=signal.confidence,
@@ -1472,6 +1479,7 @@ class Orchestrator:
                 config=self.config,
                 consecutive_wins=streak.get("consecutive_wins", 0),
                 consecutive_losses=streak.get("consecutive_losses", 0),
+                stop_distance_pct=stop_distance_pct,
             )
 
             position_size = position_value / entry_price if entry_price > 0 else 0.0

@@ -84,6 +84,7 @@ def calculate_position_size(
     config: Optional[Dict[str, Any]] = None,
     consecutive_wins: int = 0,
     consecutive_losses: int = 0,
+    stop_distance_pct: Optional[float] = None,
 ) -> float:
     """Calculate risk-adjusted position size in USD.
 
@@ -98,6 +99,9 @@ def calculate_position_size(
         config: Risk config dict (from default.yaml risk section).
         consecutive_wins: Number of consecutive winning trades.
         consecutive_losses: Number of consecutive losing trades.
+        stop_distance_pct: Actual stop distance as a fraction (e.g. 0.04 for 4%).
+            Computed as abs(entry_price - stop_loss) / entry_price.
+            Falls back to 0.02 (2%) if not provided or zero.
 
     Returns:
         Position size in USD.
@@ -137,12 +141,29 @@ def calculate_position_size(
     position_size = min(kelly_size, max_position)
 
     # Also ensure stop-loss risk stays within max risk per trade.
-    # The caller should verify this with the actual stop distance;
-    # here we provide an upper bound based on the risk budget.
+    # Use the actual stop distance when available; fall back to 2% if not provided.
     max_risk_budget = portfolio_value * max_risk_per_trade_pct
-    # If the position size would risk more than the budget at a 2% stop distance
-    # (a conservative assumption), clamp it.
-    position_size = min(position_size, max_risk_budget / 0.02) if position_size > 0 else 0.0
+
+    DEFAULT_STOP_DISTANCE = 0.02
+    MAX_STOP_DISTANCE = 0.10  # 10% cap — beyond this is likely an error
+
+    effective_stop = DEFAULT_STOP_DISTANCE
+    if stop_distance_pct is not None and stop_distance_pct > 0:
+        if stop_distance_pct > MAX_STOP_DISTANCE:
+            logger.warning(
+                "Computed stop distance %.2f%% exceeds %.0f%% cap — clamping to %.0f%%.",
+                stop_distance_pct * 100, MAX_STOP_DISTANCE * 100, MAX_STOP_DISTANCE * 100,
+            )
+            effective_stop = MAX_STOP_DISTANCE
+        else:
+            effective_stop = stop_distance_pct
+    else:
+        logger.debug(
+            "No stop distance provided (got %s); falling back to default %.0f%%.",
+            stop_distance_pct, DEFAULT_STOP_DISTANCE * 100,
+        )
+
+    position_size = min(position_size, max_risk_budget / effective_stop) if position_size > 0 else 0.0
     position_size = min(position_size, max_position)
 
     # Never negative

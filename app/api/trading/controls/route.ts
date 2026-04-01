@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/lib/file-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -23,28 +24,26 @@ function appendActivity(entry: {
   message: string;
   details?: Record<string, unknown>;
 }) {
-  try {
-    ensureTmpDir();
-    const paths = [join(TMP_DIR, "activity-log.json"), join(DATA_DIR, "activity-log.json")];
-    let activities: unknown[] = [];
-    for (const p of paths) {
-      if (existsSync(p)) {
-        try {
-          const raw = JSON.parse(readFileSync(p, "utf-8"));
-          if (Array.isArray(raw)) { activities = raw; break; }
-        } catch { /* ignore */ }
-      }
-    }
-    activities.push({
-      id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: new Date().toISOString(),
-      ...entry,
-    });
-    if (activities.length > 500) activities = activities.slice(-500);
-    writeFileSync(join(TMP_DIR, "activity-log.json"), JSON.stringify(activities, null, 2), "utf-8");
-  } catch (e) {
+  const activityPath = join(TMP_DIR, "activity-log.json");
+  lockedReadModifyWrite<unknown[]>(
+    activityPath,
+    (current) => {
+      const activities = Array.isArray(current)
+        ? current
+        : readJsonWithFallback<unknown[]>(
+            [join(TMP_DIR, "activity-log.json"), join(DATA_DIR, "activity-log.json")],
+            [],
+          );
+      activities.push({
+        id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        ...entry,
+      });
+      return activities.slice(-500);
+    },
+  ).catch((e) => {
     console.error("Failed to log activity from controls route:", e);
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -71,20 +70,16 @@ const DEFAULT_STATE: TradingControlsState = {
 };
 
 function readState(): TradingControlsState {
-  // Try /tmp first (latest writes), then data/ (seeded defaults)
-  for (const p of [CONTROLS_PATH_TMP, CONTROLS_PATH_DATA]) {
-    if (existsSync(p)) {
-      try {
-        return { ...DEFAULT_STATE, ...JSON.parse(readFileSync(p, "utf-8")) };
-      } catch { /* ignore */ }
-    }
-  }
-  return { ...DEFAULT_STATE };
+  const raw = readJsonWithFallback<Partial<TradingControlsState>>(
+    [CONTROLS_PATH_TMP, CONTROLS_PATH_DATA],
+    {},
+  );
+  return { ...DEFAULT_STATE, ...raw };
 }
 
-function writeState(state: TradingControlsState) {
+async function writeState(state: TradingControlsState) {
   ensureTmpDir();
-  writeFileSync(CONTROLS_PATH_TMP, JSON.stringify(state, null, 2), "utf-8");
+  await atomicWriteFile(CONTROLS_PATH_TMP, JSON.stringify(state, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +157,7 @@ export async function POST(request: NextRequest) {
       state.assets = assets;
     }
 
-    writeState(state);
+    await writeState(state);
 
     // Log activity for state changes
     if (action === "start") {

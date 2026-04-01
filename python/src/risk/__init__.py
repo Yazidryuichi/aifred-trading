@@ -283,6 +283,7 @@ class RiskManagementAgent:
         win_rate: float = 0.55,
         avg_win: float = 1.0,
         avg_loss: float = 1.0,
+        stop_distance_pct: Optional[float] = None,
     ) -> float:
         """Calculate a risk-adjusted position size.
 
@@ -295,6 +296,8 @@ class RiskManagementAgent:
             win_rate: Historical win rate 0-1.
             avg_win: Average winning trade return.
             avg_loss: Average losing trade return.
+            stop_distance_pct: Actual stop distance as a fraction
+                (e.g. 0.04 for 4%). Falls back to 2% if not provided.
 
         Returns:
             Position size in USD.
@@ -305,6 +308,7 @@ class RiskManagementAgent:
             win_rate, avg_win, avg_loss, self.config,
             consecutive_wins=streak["consecutive_wins"],
             consecutive_losses=streak["consecutive_losses"],
+            stop_distance_pct=stop_distance_pct,
         )
         size = adjust_for_volatility_regime(size, self._current_regime.value)
         recovery = self.drawdown_manager.get_recovery_multiplier()

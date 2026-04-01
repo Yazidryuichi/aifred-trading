@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/lib/file-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -68,23 +69,17 @@ function ensureTmpDir() {
 }
 
 function readActivities(): ActivityEntry[] {
-  // Try /tmp first (has latest user-generated entries), then data/ (seeded history)
-  for (const p of [ACTIVITY_PATH_TMP, ACTIVITY_PATH_DATA]) {
-    if (existsSync(p)) {
-      try {
-        const data = JSON.parse(readFileSync(p, "utf-8"));
-        if (Array.isArray(data)) return data as ActivityEntry[];
-      } catch { /* ignore */ }
-    }
-  }
-  return [];
+  return readJsonWithFallback<ActivityEntry[]>(
+    [ACTIVITY_PATH_TMP, ACTIVITY_PATH_DATA],
+    [],
+  );
 }
 
-function writeActivities(entries: ActivityEntry[]) {
+async function writeActivities(entries: ActivityEntry[]) {
   ensureTmpDir();
   // Trim to MAX_ENTRIES, keeping the newest
   const trimmed = entries.slice(-MAX_ENTRIES);
-  writeFileSync(ACTIVITY_PATH_TMP, JSON.stringify(trimmed, null, 2), "utf-8");
+  await atomicWriteFile(ACTIVITY_PATH_TMP, JSON.stringify(trimmed, null, 2));
 }
 
 function generateId(): string {
@@ -588,7 +583,7 @@ export async function GET(request: NextRequest) {
     // If empty, seed with realistic data
     if (activities.length === 0) {
       activities = generateSeedActivities();
-      writeActivities(activities);
+      await writeActivities(activities);
     }
 
     const url = new URL(request.url);
@@ -644,13 +639,17 @@ export async function POST(request: NextRequest) {
       details: finalDetails,
     };
 
-    let activities = readActivities();
-    // Seed if empty before appending
-    if (activities.length === 0) {
-      activities = generateSeedActivities();
-    }
-    activities.push(entry);
-    writeActivities(activities);
+    await lockedReadModifyWrite<ActivityEntry[]>(
+      ACTIVITY_PATH_TMP,
+      (current) => {
+        let activities = Array.isArray(current) ? current : readActivities();
+        if (activities.length === 0) {
+          activities = generateSeedActivities();
+        }
+        activities.push(entry);
+        return activities.slice(-MAX_ENTRIES);
+      },
+    );
 
     return NextResponse.json({ success: true, entry });
   } catch (error) {

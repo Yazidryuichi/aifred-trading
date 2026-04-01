@@ -718,7 +718,7 @@ function ExecuteTradeModal({
                 Tier {result.tier}
               </span>
               <span className="ml-auto text-[11px] text-zinc-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                via {typeof result.broker === "object" ? result.broker?.name : result.broker}
+                via {result.broker ?? "unknown"}
               </span>
             </div>
 
@@ -1595,12 +1595,18 @@ function RegimeTab() {
       ) : backtestData?.metrics ? (
         <>
           <div className="card-glass rounded-2xl p-6">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-1">
               <Layers className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-medium tracking-wider uppercase text-zinc-500" style={{ fontFamily: "JetBrains Mono, monospace" }}>
                 Backtest Performance — 180 Days
               </span>
+              <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded tracking-wider uppercase" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                DEMO DATA
+              </span>
             </div>
+            <p className="text-[10px] text-zinc-600 mb-4" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+              Simulated results — not indicative of future performance
+            </p>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {[
@@ -2351,14 +2357,25 @@ function OverviewTab({
       {/* ─── Live System Status ─────────────────────────────── */}
       <LiveStatusPanel />
 
-      {/* ─── Backtest Label ─────────────────────────────────── */}
-      <div className="flex items-center gap-3 mb-1">
-        <span className="text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/15 px-2.5 py-1 rounded-lg tracking-wider uppercase font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-          30-Day Walk-Forward Backtest Results
-        </span>
-        <span className="text-[10px] text-zinc-600" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-          Paper trading mode — connect broker for live execution
-        </span>
+      {/* ─── Demo Data Warning Banner ──────────────────────── */}
+      <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
+        <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="text-[11px] text-amber-400 font-bold tracking-wider uppercase"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}
+            >
+              DEMO DATA
+            </span>
+            <span className="text-[10px] text-amber-400/60 bg-amber-500/10 border border-amber-500/15 px-2 py-0.5 rounded-md tracking-wider uppercase font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+              Simulated Backtest
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Based on simulated backtest results. Not indicative of future performance. Live trading validation in progress.
+          </p>
+        </div>
       </div>
 
       {/* ─── Hero Stats ─────────────────────────────────────── */}
@@ -2485,6 +2502,16 @@ function OverviewTab({
               />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+        {/* Equity curve disclaimer */}
+        <div className="flex items-center gap-2 mt-3 px-1">
+          <AlertTriangle className="w-3 h-3 text-amber-500/50 flex-shrink-0" />
+          <p
+            className="text-[10px] text-zinc-600 leading-relaxed"
+            style={{ fontFamily: "JetBrains Mono, monospace" }}
+          >
+            DEMO DATA — Simulated backtest equity curve. Past hypothetical performance does not guarantee future results.
+          </p>
         </div>
       </motion.div>
 
@@ -2817,15 +2844,18 @@ function ActivityTab() {
         localStorage.getItem("aifred_local_trades") || "[]"
       );
       // Sanitize entries — ensure title/message are strings, not objects
-      const sanitize = (e: Record<string, unknown>): ActivityEntry => ({
-        ...e,
-        id: (typeof e.id === "string" ? e.id : null) || `gen_${Math.random().toString(36).slice(2, 8)}`,
-        title: typeof e.title === "string" ? e.title : (typeof e.asset === "string" ? e.asset : "Trade"),
-        message: typeof e.message === "string" ? e.message : (typeof e.title === "string" ? e.title : (typeof e.asset === "string" ? e.asset : "Trade executed")),
-        type: (typeof e.type === "string" ? e.type : null) || "trade_executed",
-        severity: (typeof e.severity === "string" ? e.severity : null) || "info",
-        timestamp: (typeof e.timestamp === "string" ? e.timestamp : null) || new Date().toISOString(),
-      } as ActivityEntry);
+      const sanitize = (e: ActivityEntry): ActivityEntry => {
+        const raw = e as unknown as Record<string, unknown>;
+        return {
+          ...e,
+          id: (typeof raw.id === "string" ? raw.id : null) || `gen_${Math.random().toString(36).slice(2, 8)}`,
+          title: typeof raw.title === "string" ? raw.title : (typeof raw.asset === "string" ? raw.asset : "Trade"),
+          message: typeof raw.message === "string" ? raw.message : (typeof raw.title === "string" ? raw.title : (typeof raw.asset === "string" ? raw.asset : "Trade executed")),
+          type: (typeof raw.type === "string" ? raw.type : null) || "trade_executed",
+          severity: (typeof raw.severity === "string" ? raw.severity : null) || "info",
+          timestamp: (typeof raw.timestamp === "string" ? raw.timestamp : null) || new Date().toISOString(),
+        } as ActivityEntry;
+      };
       // Merge: local trades first, then server entries, deduplicate by id
       const merged = [...localTrades.map(sanitize), ...serverList.map(sanitize)];
       const seen = new Set<string>();

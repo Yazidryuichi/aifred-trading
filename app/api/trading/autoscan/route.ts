@@ -4,6 +4,8 @@ import { join } from "path";
 import { detectRegime, MarketRegime } from "@/lib/hmm-regime";
 import { calculateConfirmations, type OHLCVCandle } from "@/lib/technical-indicators";
 import { loadStats, selectStrategy, computeConfidence } from "@/lib/strategy-learning";
+import { executeTrade, type ExecuteTradeParams } from "@/lib/execute-trade";
+import { lockedReadModifyWrite, atomicWriteFile } from "@/lib/file-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -115,19 +117,23 @@ function readActivities(): unknown[] {
 }
 
 function appendActivity(entry: Record<string, unknown>) {
-  try {
-    ensureTmpDir();
-    const activities = readActivities();
-    activities.push({
-      id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: new Date().toISOString(),
-      ...entry,
-    });
-    const trimmed = activities.slice(-500);
-    writeFileSync(join(TMP_DIR, "activity-log.json"), JSON.stringify(trimmed, null, 2), "utf-8");
-  } catch (e) {
+  const activityPath = join(TMP_DIR, "activity-log.json");
+  lockedReadModifyWrite<unknown[]>(
+    activityPath,
+    (current) => {
+      const activities = Array.isArray(current)
+        ? current
+        : readActivities(); // fallback to multi-path read if /tmp file missing
+      activities.push({
+        id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        ...entry,
+      });
+      return activities.slice(-500);
+    },
+  ).catch((e) => {
     console.error("Failed to append activity:", e);
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +216,10 @@ function loadDailyPnl(): DailyPnlRecord {
 
 function saveDailyPnl(record: DailyPnlRecord) {
   ensureTmpDir();
-  writeFileSync(join(TMP_DIR, "daily-pnl.json"), JSON.stringify(record, null, 2), "utf-8");
+  // Use atomic write to prevent corruption from concurrent requests
+  atomicWriteFile(join(TMP_DIR, "daily-pnl.json"), JSON.stringify(record, null, 2)).catch((e) => {
+    console.error("Failed to save daily PnL:", e);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -374,44 +383,34 @@ async function executeSignal(
   brokerId?: string,
   credentials?: Record<string, string>,
 ): Promise<ExecutionResult> {
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
   try {
-    const body: Record<string, unknown> = {
+    // Determine the effective side: if exiting, flip the side for the order
+    const effectiveSide: "LONG" | "SHORT" =
+      signal.type === "exit"
+        ? (signal.side === "LONG" ? "SHORT" : "LONG")
+        : signal.side;
+
+    const params: ExecuteTradeParams = {
       symbol: signal.symbol,
-      side: signal.side,
+      side: effectiveSide,
       quantity: signal.quantity,
       orderType: "market",
       mode,
+      brokerId: mode === "live" ? brokerId : undefined,
+      credentials: mode === "live" ? credentials : undefined,
     };
 
-    if (mode === "live" && brokerId) {
-      body.brokerId = brokerId;
-      if (credentials) body.credentials = credentials;
-    }
-
-    // If exiting, flip the side for the order
-    if (signal.type === "exit") {
-      body.side = signal.side === "LONG" ? "SHORT" : "LONG";
-    }
-
-    const res = await fetch(`${baseUrl}/api/trading/execute`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    const data = await res.json();
+    // Call the shared execution logic directly — no HTTP round-trip needed.
+    // The autoscan endpoint is already auth-protected by middleware,
+    // so we don't need to re-authenticate for the execute call.
+    const result = await executeTrade(params);
 
     return {
       symbol: signal.symbol,
-      success: data.success ?? false,
+      success: result.data.success as boolean ?? false,
       mode,
-      orderId: data.orderId,
-      error: data.success ? undefined : (data.message ?? "Execution failed"),
+      orderId: result.data.orderId as string | undefined,
+      error: result.data.success ? undefined : ((result.data.message as string) ?? "Execution failed"),
     };
   } catch (err) {
     return {

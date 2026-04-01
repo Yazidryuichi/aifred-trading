@@ -31,11 +31,19 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Fail-closed: if NEXTAUTH_SECRET is not configured, reject all protected requests
+  if (!process.env.NEXTAUTH_SECRET) {
+    return NextResponse.json(
+      { error: "Server misconfiguration" },
+      { status: 500 },
+    );
+  }
+
   // Protect all /api/trading/* routes
   if (pathname.startsWith("/api/trading")) {
     const token = await getToken({
       req: request,
-      secret: process.env.NEXTAUTH_SECRET || "aifred-dev-secret-change-in-prod",
+      secret: process.env.NEXTAUTH_SECRET,
     });
 
     if (!token) {
@@ -73,7 +81,7 @@ export async function middleware(request: NextRequest) {
   if (pathname === "/" || pathname.startsWith("/trading") || pathname.startsWith("/settings")) {
     const token = await getToken({
       req: request,
-      secret: process.env.NEXTAUTH_SECRET || "aifred-dev-secret-change-in-prod",
+      secret: process.env.NEXTAUTH_SECRET,
     });
 
     if (!token) {

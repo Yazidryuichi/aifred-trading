@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypto";
+import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/lib/file-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -19,27 +21,22 @@ function appendActivity(entry: {
   message: string;
   details?: Record<string, unknown>;
 }) {
-  try {
-    if (!existsSync("/tmp/aifred-data")) mkdirSync("/tmp/aifred-data", { recursive: true });
-    let activities: unknown[] = [];
-    for (const p of [ACTIVITY_PATH_TMP, ACTIVITY_PATH_DATA]) {
-      if (existsSync(p)) {
-        try {
-          const raw = JSON.parse(readFileSync(p, "utf-8"));
-          if (Array.isArray(raw)) { activities = raw; break; }
-        } catch { /* ignore */ }
-      }
-    }
-    activities.push({
-      id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: new Date().toISOString(),
-      ...entry,
-    });
-    if (activities.length > 500) activities = activities.slice(-500);
-    writeFileSync(ACTIVITY_PATH_TMP, JSON.stringify(activities, null, 2), "utf-8");
-  } catch (e) {
+  lockedReadModifyWrite<unknown[]>(
+    ACTIVITY_PATH_TMP,
+    (current) => {
+      const activities = Array.isArray(current)
+        ? current
+        : readJsonWithFallback<unknown[]>([ACTIVITY_PATH_TMP, ACTIVITY_PATH_DATA], []);
+      activities.push({
+        id: `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toISOString(),
+        ...entry,
+      });
+      return activities.slice(-500);
+    },
+  ).catch((e) => {
     console.error("Failed to log activity from brokers route:", e);
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +205,59 @@ function ensureTmpDir() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AES-256-GCM encryption helpers for broker credentials
+// ---------------------------------------------------------------------------
+
+function getEncryptionKey(): Buffer {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) {
+    throw new Error("NEXTAUTH_SECRET is not set — cannot encrypt/decrypt broker credentials.");
+  }
+  // Derive a 32-byte key from the secret using SHA-256
+  return createHash("sha256").update(secret).digest();
+}
+
+interface EncryptedPayload {
+  iv: string;   // hex
+  tag: string;  // hex
+  data: string; // hex
+}
+
+function encryptCredentials(data: object): string {
+  const key = getEncryptionKey();
+  const iv = randomBytes(12); // 96-bit IV for GCM
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+
+  const plaintext = JSON.stringify(data);
+  let encrypted = cipher.update(plaintext, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const tag = cipher.getAuthTag();
+
+  const payload: EncryptedPayload = {
+    iv: iv.toString("hex"),
+    tag: tag.toString("hex"),
+    data: encrypted,
+  };
+  return JSON.stringify(payload);
+}
+
+function decryptCredentials(encrypted: string): object {
+  const key = getEncryptionKey();
+  const payload: EncryptedPayload = JSON.parse(encrypted);
+
+  const iv = Buffer.from(payload.iv, "hex");
+  const tag = Buffer.from(payload.tag, "hex");
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+
+  let decrypted = decipher.update(payload.data, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return JSON.parse(decrypted);
+}
+
+// ---------------------------------------------------------------------------
+
 interface ConnectionRecord {
   brokerId: string;
   connected: boolean;
@@ -217,26 +267,34 @@ interface ConnectionRecord {
 }
 
 function readConnections(): Record<string, ConnectionRecord> {
-  // Try /tmp first (latest), then data/ (build-time seed)
-  for (const p of [CONNECTIONS_PATH_TMP, CONNECTIONS_PATH_DATA]) {
-    if (existsSync(p)) {
-      try {
-        return JSON.parse(readFileSync(p, "utf-8"));
-      } catch { /* ignore */ }
-    }
-  }
-  return {};
+  return readJsonWithFallback<Record<string, ConnectionRecord>>(
+    [CONNECTIONS_PATH_TMP, CONNECTIONS_PATH_DATA],
+    {},
+  );
 }
 
-function writeConnections(data: Record<string, ConnectionRecord>) {
+async function writeConnectionsAsync(data: Record<string, ConnectionRecord>) {
   ensureTmpDir();
-  writeFileSync(CONNECTIONS_PATH_TMP, JSON.stringify(data, null, 2), "utf-8");
+  await atomicWriteFile(CONNECTIONS_PATH_TMP, JSON.stringify(data, null, 2));
 }
 
 function readSecrets(): Record<string, Record<string, string>> {
   if (!existsSync(SECRETS_PATH_TMP)) return {};
   try {
-    return JSON.parse(readFileSync(SECRETS_PATH_TMP, "utf-8"));
+    const raw = readFileSync(SECRETS_PATH_TMP, "utf-8");
+    const parsed = JSON.parse(raw);
+
+    // Migration: detect plaintext JSON (no iv/tag/data envelope)
+    // Plaintext files are a dict of brokerId -> credentials objects
+    if (parsed && typeof parsed === "object" && !parsed.iv && !parsed.tag && !parsed.data) {
+      // This is plaintext — encrypt it in place and return
+      console.warn("[security] Migrating plaintext broker secrets to encrypted storage.");
+      writeSecrets(parsed as Record<string, Record<string, string>>);
+      return parsed as Record<string, Record<string, string>>;
+    }
+
+    // Already encrypted (has iv/tag/data)
+    return decryptCredentials(raw) as Record<string, Record<string, string>>;
   } catch {
     return {};
   }
@@ -244,7 +302,10 @@ function readSecrets(): Record<string, Record<string, string>> {
 
 function writeSecrets(data: Record<string, Record<string, string>>) {
   ensureTmpDir();
-  writeFileSync(SECRETS_PATH_TMP, JSON.stringify(data, null, 2), "utf-8");
+  // Use atomic write to prevent corruption from concurrent requests
+  atomicWriteFile(SECRETS_PATH_TMP, encryptCredentials(data)).catch((e) => {
+    console.error("Failed to write secrets atomically:", e);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +422,7 @@ export async function GET(request: NextRequest) {
       }
 
       if (changed) {
-        writeConnections(connections);
+        await writeConnectionsAsync(connections);
         writeSecrets(secrets);
       }
     }
@@ -445,7 +506,7 @@ export async function POST(request: NextRequest) {
       lastChecked: new Date().toISOString(),
       accountId: `${brokerId}_${Date.now().toString(36)}`,
     };
-    writeConnections(connections);
+    await writeConnectionsAsync(connections);
 
     // Log activity
     appendActivity({
@@ -503,7 +564,7 @@ export async function DELETE(request: NextRequest) {
         status: "disconnected",
         lastChecked: new Date().toISOString(),
       };
-      writeConnections(connections);
+      await writeConnectionsAsync(connections);
     }
 
     // Find broker name for activity log
