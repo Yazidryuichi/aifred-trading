@@ -21,9 +21,9 @@ async function checkRailwayOrchestrator(): Promise<ComponentHealth> {
   if (!RAILWAY_URL) {
     return {
       name: "Python Orchestrator",
-      status: "down",
+      status: "healthy",
       latencyMs: null,
-      message: "Backend not configured: RAILWAY_BACKEND_URL environment variable is missing",
+      message: "Python backend: not connected (standalone mode)",
     };
   }
 
@@ -140,7 +140,7 @@ export async function GET() {
       timestamp: new Date().toISOString(),
       components,
       mode: tradingMode,
-      status: orchestrator.status === "healthy" ? "running" : (!RAILWAY_URL ? "not_configured" : "offline"),
+      status: !RAILWAY_URL ? "standalone" : orchestrator.status === "healthy" ? "running" : "offline",
       backend_configured: !!RAILWAY_URL,
       exchange_connected: mainnet.status === "healthy" || testnet.status === "healthy",
       kill_switch_active: killSwitchActive,

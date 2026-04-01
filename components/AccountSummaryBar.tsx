@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useHyperliquidWithWallet } from "@/hooks/useHyperliquidWithWallet";
+import { useViewMode } from "@/stores/viewMode";
 
 export function AccountSummaryBar() {
-  const [viewMode, setViewMode] = useState<"live" | "demo">("live");
+  const { mode: viewMode, setMode: setViewMode } = useViewMode();
   const hl = useHyperliquidWithWallet();
 
   // Secondary data source — demo/backtest metrics
