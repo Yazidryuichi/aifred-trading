@@ -19,7 +19,9 @@ export function AccountSummaryBar() {
   const dailyPnl = performance?.dailyPnl ?? 0;
   const dailyPnlPct = performance?.dailyPnlPct ?? 0;
   const openExposure = performance?.openExposure ?? 0;
-  const openPositions = performance?.openPositions ?? 0;
+  const openPositions = typeof performance?.openPositions === "number"
+    ? performance.openPositions
+    : (performance?.summary?.openPositions ?? 0);
   const maxPositions = performance?.maxPositions ?? 2;
   const regime = health?.regime ?? "unknown";
   const botStatus = health?.kill_switch_active ? "killed" : health?.status ?? "unknown";
