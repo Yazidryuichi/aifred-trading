@@ -10,6 +10,8 @@ import {
   X,
   Activity,
   BarChart3,
+  Wrench,
+  Trophy,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ConnectWallet } from "@/components/wallet/ConnectWallet";
@@ -288,6 +290,16 @@ export default function TradingDashboard() {
                 <span>Execute Trade</span>
               </button>
 
+              {/* Arena */}
+              <button
+                onClick={() => router.push("/trading/arena")}
+                className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center hover:bg-amber-500/20 hover:border-amber-500/30 transition-all text-amber-400 hover:text-amber-300"
+                title="AI Arena"
+                aria-label="Open AI competition arena"
+              >
+                <Trophy className="w-4 h-4" />
+              </button>
+
               {/* AI Decisions */}
               <button
                 onClick={() => router.push("/trading/decisions")}
@@ -306,6 +318,16 @@ export default function TradingDashboard() {
                 aria-label="Open trading stats"
               >
                 <BarChart3 className="w-4 h-4" />
+              </button>
+
+              {/* Config */}
+              <button
+                onClick={() => router.push("/trading/config")}
+                className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
+                title="Config"
+                aria-label="Open AI Traders config"
+              >
+                <Wrench className="w-4 h-4" />
               </button>
 
               {/* Settings */}
