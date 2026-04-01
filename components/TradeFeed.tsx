@@ -37,7 +37,12 @@ export function TradeFeed() {
 
   return (
     <div className="p-4 rounded-xl border border-white/10 bg-white/5">
-      <h3 className="text-lg font-bold text-white mb-3">Recent Trades</h3>
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-lg font-bold text-white">Recent Trades</h3>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400">
+          DEMO
+        </span>
+      </div>
       {trades.length === 0 ? (
         <p className="text-gray-500 text-sm">No recent trades</p>
       ) : (

@@ -1,8 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useHyperliquidWithWallet } from "@/hooks/useHyperliquidWithWallet";
 
 export function AccountSummaryBar() {
+  const hl = useHyperliquidWithWallet();
+
+  // Secondary data source — kept for demo/backtest metrics and bot status
   const { data: performance } = useQuery({
     queryKey: ["performance"],
     queryFn: () => fetch("/api/trading/performance").then((r) => r.json()),
@@ -15,28 +19,47 @@ export function AccountSummaryBar() {
     refetchInterval: 30_000,
   });
 
-  const balance = performance?.summary?.currentEquity ?? 0;
-  const totalPnl = performance?.summary?.totalPnl ?? 0;
+  // PRIMARY: Hyperliquid data when available
+  const hlData = hl.data;
+  const useHL = !!hlData;
+
+  const balance = useHL
+    ? hlData.equity
+    : (performance?.summary?.currentEquity ?? 0);
+
+  const hlTotalPnl = useHL
+    ? hlData.positions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
+    : 0;
+  const fallbackPnl = performance?.summary?.totalPnl ?? 0;
+  const totalPnl = useHL ? hlTotalPnl : fallbackPnl;
+
   const startingEquity = balance - totalPnl;
   const totalPnlPct = startingEquity > 0 ? (totalPnl / startingEquity) * 100 : 0;
-  const openPositionsArr = Array.isArray(performance?.openPositions)
-    ? performance.openPositions
-    : [];
-  const openExposure = openPositionsArr.reduce(
-    (sum: number, p: { size?: number; entry_price?: number }) =>
-      sum + (p.size ?? 0) * (p.entry_price ?? 0),
-    0,
-  );
-  const openPositions = typeof performance?.summary?.openPositions === "number"
-    ? performance.summary.openPositions
-    : openPositionsArr.length;
+
+  const openPositions = useHL
+    ? hlData.positions.length
+    : (typeof performance?.summary?.openPositions === "number"
+        ? performance.summary.openPositions
+        : (Array.isArray(performance?.openPositions) ? performance.openPositions.length : 0));
+
+  const openExposure = useHL
+    ? hlData.positions.reduce((sum, p) => sum + Math.abs(p.size) * p.entryPx, 0)
+    : (Array.isArray(performance?.openPositions)
+        ? performance.openPositions.reduce(
+            (sum: number, p: { size?: number; entry_price?: number }) =>
+              sum + (p.size ?? 0) * (p.entry_price ?? 0),
+            0,
+          )
+        : 0);
+
   const maxPositions = performance?.maxPositions ?? 5;
   const regime = performance?.regime ?? health?.regime ?? "unknown";
   const botStatus = health?.kill_switch_active ? "killed" : health?.status ?? "unknown";
-  const exchangeConnected = health?.components?.some(
+
+  const exchangeConnected = useHL || (health?.components?.some(
     (c: { name: string; status: string }) =>
-      c.name.includes("Hyperliquid") && c.status === "healthy"
-  ) ?? false;
+      c.name.includes("Hyperliquid") && c.status === "healthy",
+  ) ?? false);
 
   const botLabel = botStatus === "not_configured" ? "STANDALONE" : botStatus.toUpperCase();
   const botColor =
@@ -49,10 +72,15 @@ export function AccountSummaryBar() {
     <div className="w-full px-4 py-2 bg-white/5 border-b border-white/10 flex items-center gap-6 text-sm overflow-x-auto">
       <div>
         <span className="text-gray-400">Balance: </span>
-        <span className="text-white font-mono font-bold">${balance.toFixed(2)}</span>
+        <span className="text-white font-mono font-bold">
+          ${balance.toFixed(2)}
+          {useHL && (
+            <span className="ml-1 text-[10px] text-emerald-500 font-normal">LIVE</span>
+          )}
+        </span>
       </div>
       <div>
-        <span className="text-gray-400">Total P&L: </span>
+        <span className="text-gray-400">{useHL ? "Unrealized P&L: " : "Total P&L: "}</span>
         <span className={`font-mono font-bold ${totalPnl >= 0 ? "text-green-400" : "text-red-400"}`}>
           {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)} ({totalPnlPct >= 0 ? "+" : ""}{totalPnlPct.toFixed(1)}%)
         </span>

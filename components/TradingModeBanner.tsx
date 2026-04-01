@@ -1,16 +1,13 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useHyperliquidData } from "@/hooks/useHyperliquidData";
 
 export function TradingModeBanner() {
-  const { data } = useQuery({
-    queryKey: ["system-health"],
-    queryFn: () => fetch("/api/trading/system-health").then((r) => r.json()),
-    refetchInterval: 30_000,
-  });
+  const hl = useHyperliquidData();
 
-  const mode = data?.mode || "paper";
-  const isLive = mode === "live";
+  // Determine mode from actual Hyperliquid state — not from system-health API
+  const hlData = hl.data;
+  const isLive = !!hlData && (hlData.equity > 0 || hlData.positions.length > 0);
 
   return (
     <div
@@ -20,7 +17,11 @@ export function TradingModeBanner() {
           : "bg-green-600 text-white"
       }`}
     >
-      {isLive ? "LIVE TRADING — Real Money" : "PAPER TRADING — Simulated"}
+      {isLive
+        ? "LIVE TRADING \u2014 Real Money"
+        : hl.isLoading
+          ? "CONNECTING\u2026"
+          : "PAPER TRADING \u2014 Simulated"}
     </div>
   );
 }
