@@ -8,8 +8,9 @@ export async function GET() {
   if (!RAILWAY_URL) {
     return NextResponse.json({
       running: false,
+      not_configured: true,
       source: "railway",
-      error: "Backend not configured: RAILWAY_BACKEND_URL environment variable is missing",
+      error: "Python backend not connected. Trading via API routes.",
     });
   }
 

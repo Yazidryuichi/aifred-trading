@@ -13,6 +13,9 @@ export default function TradingPage() {
         <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold text-white">AIFred Trading</h1>
+            <span className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">
+              powered by <span className="text-emerald-400">Hyperliquid</span>
+            </span>
             <SystemHealthDot />
           </div>
           <KillSwitchButton />

@@ -1762,6 +1762,7 @@ function RegimeTab() {
 
 interface PaperStatusData {
   running: boolean;
+  not_configured?: boolean;
   scanCount: number;
   lastScanTime: string | null;
   lastPrices: Record<string, number>;
@@ -1789,6 +1790,28 @@ interface PaperStatusData {
 function normalizePaperStatus(raw: Record<string, unknown>): PaperStatusData {
   // If it already has the expected shape (local API), return as-is
   if (raw.portfolioValue !== undefined) return raw as unknown as PaperStatusData;
+
+  // If backend is not configured, return minimal data with flag
+  if (raw.not_configured) {
+    return {
+      running: false,
+      not_configured: true,
+      scanCount: 0,
+      lastScanTime: null,
+      lastPrices: {},
+      portfolioValue: 0,
+      positions: [],
+      totalPnl: 0,
+      signalsGenerated: 0,
+      agentStatus: {},
+      startedAt: null,
+      assets: [],
+      scanInterval: 0,
+      logLines: 0,
+      lastActivity: null,
+      source: "not_configured",
+    };
+  }
 
   // Railway shape — extract what we can from log data
   const logTail = (raw.log_tail as string[]) || [];
@@ -1850,10 +1873,13 @@ function LiveStatusPanel() {
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
   const fetchAll = useCallback(() => {
+    const safeFetchJson = (url: string) =>
+      fetch(url).then((r) => r.json()).catch(() => null);
+
     Promise.allSettled([
-      fetch("/api/trading/paper-status").then((r) => r.json()),
-      fetch("/api/trading/system-health").then((r) => r.json()),
-      fetch("/api/trading/live-prices").then((r) => r.json()),
+      safeFetchJson("/api/trading/paper-status"),
+      safeFetchJson("/api/trading/system-health"),
+      safeFetchJson("/api/trading/live-prices"),
     ]).then(([paperRes, healthRes, pricesRes]) => {
       if (paperRes.status === "fulfilled") setPaperStatus(normalizePaperStatus(paperRes.value));
       if (healthRes.status === "fulfilled") setSystemHealth(healthRes.value);
@@ -1925,9 +1951,9 @@ function LiveStatusPanel() {
           )}
           {paperStatus && !paperStatus.running && (
             <span className="flex items-center gap-1.5">
-              <Circle className="w-2 h-2 text-red-400 fill-red-400" />
-              <span className="text-[10px] text-red-400" style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                STOPPED
+              <Circle className={`w-2 h-2 ${paperStatus.not_configured ? "text-amber-400 fill-amber-400" : "text-red-400 fill-red-400"}`} />
+              <span className={`text-[10px] ${paperStatus.not_configured ? "text-amber-400" : "text-red-400"}`} style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                {paperStatus.not_configured ? "STANDALONE" : "STOPPED"}
               </span>
             </span>
           )}
@@ -1967,12 +1993,20 @@ function LiveStatusPanel() {
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-zinc-500">Status</span>
                 <span
-                  className={`text-[11px] font-medium ${paperStatus.running ? "text-emerald-400" : "text-red-400"}`}
+                  className={`text-[11px] font-medium ${
+                    paperStatus.running ? "text-emerald-400" :
+                    paperStatus.not_configured ? "text-amber-400" : "text-red-400"
+                  }`}
                   style={{ fontFamily: "JetBrains Mono, monospace" }}
                 >
-                  {paperStatus.running ? "Active" : "Inactive"}
+                  {paperStatus.running ? "Active" : paperStatus.not_configured ? "Standalone" : "Inactive"}
                 </span>
               </div>
+              {paperStatus.not_configured && (
+                <div className="text-[10px] text-amber-400/60 leading-tight">
+                  Python backend not connected. Trading via Next.js API routes.
+                </div>
+              )}
 
               {/* Portfolio */}
               <div className="flex items-center justify-between">
@@ -2069,7 +2103,11 @@ function LiveStatusPanel() {
               className="text-[10px] text-zinc-600"
               style={{ fontFamily: "JetBrains Mono, monospace" }}
             >
-              {livePrices?.source === "hyperliquid-mainnet" ? "Hyperliquid" : "Unavailable"}
+              {livePrices?.source === "hyperliquid-mainnet"
+                ? "Hyperliquid"
+                : livePrices?.source === "coingecko-fallback"
+                ? "CoinGecko"
+                : "Unavailable"}
             </span>
           </div>
 

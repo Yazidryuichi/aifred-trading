@@ -17,11 +17,23 @@ interface Trade {
 export function TradeFeed() {
   const { data } = useQuery({
     queryKey: ["trade-feed"],
-    queryFn: () => fetch("/api/trading/activity?type=trades&limit=20").then((r) => r.json()),
+    queryFn: () => fetch("/api/trading").then((r) => r.json()),
     refetchInterval: 5_000,
   });
 
-  const trades: Trade[] = data?.trades ?? [];
+  const trades: Trade[] = ((data?.recentTrades as Record<string, unknown>[]) ?? [])
+    .slice(0, 20)
+    .map((t) => ({
+      id: String(t.id ?? ""),
+      asset: (t.asset as string) ?? "",
+      side: (t.side as string) ?? "",
+      entryPrice: (t.entry_price as number) ?? 0,
+      exitPrice: (t.exit_price as number) ?? undefined,
+      pnl: (t.pnl as number) ?? undefined,
+      signalTier: (t.tier as string) ?? "",
+      status: t.exit_price ? "closed" : "filled",
+      timestamp: (t.entry_time as string) ?? "",
+    }));
 
   return (
     <div className="p-4 rounded-xl border border-white/10 bg-white/5">

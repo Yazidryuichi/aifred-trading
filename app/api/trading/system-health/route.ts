@@ -140,7 +140,9 @@ export async function GET() {
       timestamp: new Date().toISOString(),
       components,
       mode: tradingMode,
-      status: orchestrator.status === "healthy" ? "running" : "offline",
+      status: orchestrator.status === "healthy" ? "running" : (!RAILWAY_URL ? "not_configured" : "offline"),
+      backend_configured: !!RAILWAY_URL,
+      exchange_connected: mainnet.status === "healthy" || testnet.status === "healthy",
       kill_switch_active: killSwitchActive,
     });
   } catch (error) {

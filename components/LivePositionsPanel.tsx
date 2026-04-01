@@ -16,11 +16,22 @@ interface Position {
 export function LivePositionsPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ["live-positions"],
-    queryFn: () => fetch("/api/trading/activity?type=positions").then((r) => r.json()),
+    queryFn: () => fetch("/api/trading").then((r) => r.json()),
     refetchInterval: 5_000,
   });
 
-  const positions: Position[] = data?.positions ?? [];
+  const positions: Position[] = (data?.openPositions ?? []).map(
+    (p: Record<string, unknown>) => ({
+      asset: (p.asset as string) ?? "",
+      side: ((p.side as string) ?? "").toLowerCase(),
+      entryPrice: (p.entry_price as number) ?? 0,
+      currentPrice: (p.fill_price as number) ?? (p.entry_price as number) ?? 0,
+      size: (p.size as number) ?? 0,
+      unrealizedPnl: (p.pnl as number) ?? 0,
+      stopLoss: (p.stop_loss as number) ?? 0,
+      openedAt: (p.entry_time as string) ?? "",
+    }),
+  );
 
   if (isLoading) {
     return (
