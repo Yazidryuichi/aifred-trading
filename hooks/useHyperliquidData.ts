@@ -137,6 +137,7 @@ export function useHyperliquidData(_address?: string) {
     refetchInterval: 12_000,
     staleTime: 8_000,
     retry: 2,
+    placeholderData: (prev) => prev,
   });
 
   return {

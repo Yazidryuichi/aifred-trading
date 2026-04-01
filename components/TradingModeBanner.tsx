@@ -1,20 +1,9 @@
 "use client";
 
-import { useHyperliquidData } from "@/hooks/useHyperliquidData";
+const TRADING_MODE = process.env.NEXT_PUBLIC_TRADING_MODE || "paper";
 
 export function TradingModeBanner() {
-  const hl = useHyperliquidData();
-
-  const hlData = hl.data;
-  const isLive = !!hlData && (hlData.portfolioValue > 0 || hlData.positions.length > 0);
-
-  if (hl.isLoading) {
-    return (
-      <div className="w-full py-1 px-4 text-center text-sm font-bold bg-zinc-700 text-white">
-        CONNECTING TO HYPERLIQUID&hellip;
-      </div>
-    );
-  }
+  const isLive = TRADING_MODE === "live";
 
   return (
     <div

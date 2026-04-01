@@ -1,7 +1,7 @@
 "use client";
 
 import { HeroMetrics } from "@/components/trading/HeroMetrics";
-import { EquityCurve } from "@/components/trading/EquityCurve";
+import { ChartSection } from "@/components/trading/ChartSection";
 import { PositionsTable } from "@/components/trading/PositionsTable";
 import { LiveStatusPanel } from "@/components/trading/LiveStatusPanel";
 import { RecentDecisions } from "@/components/trading/RecentDecisions";
@@ -18,7 +18,7 @@ export function DashboardShell() {
       {/* Two-column: Equity Curve + Recent Decisions placeholder */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3">
-          <EquityCurve />
+          <ChartSection />
         </div>
         <div className="lg:col-span-2">
           <RecentDecisions />

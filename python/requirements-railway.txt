@@ -1,7 +1,6 @@
-# AIFred Trading — Railway Deployment (lightweight)
+# AIFred Trading — Railway Deployment
 # ==================================================
-# Excludes torch/tensorflow/heavy ML to fit Railway resource limits.
-# The system degrades gracefully without ML models.
+# Full ML ensemble enabled (PyTorch CPU-only ~180MB)
 
 # Core data
 numpy>=1.25.0
@@ -11,9 +10,13 @@ scipy>=1.11.0
 # Technical analysis (pure Python, no TA-Lib C dep)
 pandas-ta>=0.3.14
 
-# ML (lightweight only)
+# ML — full ensemble
 scikit-learn>=1.3.0
 xgboost>=2.0.0
+
+# PyTorch CPU-only (installed via --index-url in Dockerfile)
+torch>=2.0.0
+transformers>=4.35.0
 
 # Config & env
 pyyaml>=6.0.1

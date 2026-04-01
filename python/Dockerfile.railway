@@ -1,6 +1,6 @@
 # =============================================================================
 # AIFred Trading Engine — Railway Deployment Dockerfile
-# Lightweight build: no TA-Lib C library, no torch/tensorflow
+# Full ML ensemble with PyTorch CPU-only (~180MB instead of ~2GB GPU build)
 # =============================================================================
 
 FROM python:3.12-slim
@@ -12,9 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies (lightweight set)
+# Install Python dependencies with PyTorch CPU-only index
 COPY requirements-railway.txt /app/requirements-railway.txt
 RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements-railway.txt
 
 # Copy source code and config

@@ -105,7 +105,7 @@ class TechnicalAnalysisAgent:
         self._cnn: Optional[PatternCNN] = None
         self._ensemble: Optional[EnsembleMetaLearner] = None
         self._trainer: Optional[WalkForwardTrainer] = None
-        self._evaluator = ModelEvaluator()
+        self._evaluator = ModelEvaluator() if _ML_AVAILABLE else None
 
         # Cache config values
         self._lstm_cfg = lstm_cfg
@@ -136,6 +136,12 @@ class TechnicalAnalysisAgent:
     def _ensure_initialized(self, n_features: int) -> None:
         """Lazily initialize models once we know the feature count."""
         if self._is_initialized and self._input_size == n_features:
+            return
+
+        if not _ML_AVAILABLE:
+            logger.warning("ML models unavailable — indicator-only mode active")
+            self._is_initialized = True
+            self._input_size = n_features
             return
 
         self._input_size = n_features
@@ -224,6 +230,35 @@ class TechnicalAnalysisAgent:
                 timeframe=timeframe,
             )
 
+        # Indicator features (always available)
+        indicator_feats = {}
+        for col in ["rsi", "macd_hist", "bb_pct", "adx", "volume_ratio"]:
+            if col in df_feat.columns:
+                val = df_feat[col].iloc[-1]
+                indicator_feats[col] = float(val) if np.isfinite(val) else 0.0
+
+        # Rule-based signal
+        rule_val = 0.0
+        if "rule_signal" in df_feat.columns:
+            rule_val = float(df_feat["rule_signal"].iloc[-1])
+
+        if not _ML_AVAILABLE:
+            # Indicator-only mode: produce a HOLD signal with indicator context
+            logger.info(f"[{asset}] ML unavailable — returning indicator-only signal")
+            return Signal(
+                asset=asset,
+                direction=Direction.HOLD,
+                confidence=0.0,
+                source="technical",
+                timeframe=timeframe,
+                metadata={
+                    "reason": "ml_models_unavailable",
+                    "mode": "indicator_only",
+                    "indicators": indicator_feats,
+                    "rule_signal": rule_val,
+                },
+            )
+
         # Get the most recent sequence for LSTM/Transformer
         latest_seq = X[-lookback:]  # (lookback, features)
 
@@ -237,18 +272,6 @@ class TechnicalAnalysisAgent:
         ohlcv = df_feat[["open", "high", "low", "close", "volume"]].values[-lookback:]
         ohlcv_input = self._cnn.prepare_input(ohlcv[np.newaxis, :])
         cnn_signal = self._cnn.predict(ohlcv_input, asset=asset, timeframe=timeframe)
-
-        # Rule-based signal
-        rule_val = 0.0
-        if "rule_signal" in df_feat.columns:
-            rule_val = float(df_feat["rule_signal"].iloc[-1])
-
-        # Indicator features for ensemble
-        indicator_feats = {}
-        for col in ["rsi", "macd_hist", "bb_pct", "adx", "volume_ratio"]:
-            if col in df_feat.columns:
-                val = df_feat[col].iloc[-1]
-                indicator_feats[col] = float(val) if np.isfinite(val) else 0.0
 
         # Ensemble prediction
         ensemble_signal = self._ensemble.predict(
