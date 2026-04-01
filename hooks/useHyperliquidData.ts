@@ -26,8 +26,11 @@ export interface HyperliquidData {
   connected: boolean;
 }
 
+// Default Hyperliquid address — used when env var / localStorage not set
+const DEFAULT_HL_ADDRESS = "0xbec07623d9c8209E7F80dC7350b3aA0ECBdCb510";
+
 function getStaticAddress(): string | null {
-  // Try env var
+  // Try env var (baked at build time for NEXT_PUBLIC_*)
   if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_HYPERLIQUID_ADDRESS) {
     return process.env.NEXT_PUBLIC_HYPERLIQUID_ADDRESS;
   }
@@ -38,7 +41,8 @@ function getStaticAddress(): string | null {
     if (stored) return stored;
   }
 
-  return null;
+  // Fallback to default address
+  return DEFAULT_HL_ADDRESS;
 }
 
 async function fetchHyperliquidState(address: string): Promise<HyperliquidData> {
