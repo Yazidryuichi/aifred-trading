@@ -459,7 +459,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+    if (rawBody.length > 10_000) {
+      return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    }
+    const body = JSON.parse(rawBody);
     const { brokerId, credentials } = body as {
       brokerId: string;
       credentials: Record<string, string>;

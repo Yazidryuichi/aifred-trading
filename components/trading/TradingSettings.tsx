@@ -673,7 +673,7 @@ export default function TradingSettings() {
           delay={0}
         />
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
           className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
@@ -702,7 +702,7 @@ export default function TradingSettings() {
           delay={0.2}
         />
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25 }}
           className="grid lg:grid-cols-2 gap-4"
@@ -743,7 +743,7 @@ export default function TradingSettings() {
               </div>
               {controls.mode === "live" && (
                 <motion.div
-                  initial={{ opacity: 0, height: 0 }}
+                  initial={false}
                   animate={{ opacity: 1, height: "auto" }}
                   className="mt-2 flex items-center gap-2 text-[11px] text-amber-400"
                   style={{ fontFamily: "JetBrains Mono, monospace" }}
@@ -903,7 +903,7 @@ export default function TradingSettings() {
           delay={0.3}
         />
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
         >
@@ -1078,7 +1078,7 @@ export default function TradingSettings() {
           delay={0.35}
         />
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
           className="card-glass rounded-2xl p-6"
@@ -1118,7 +1118,7 @@ export default function TradingSettings() {
           delay={0.45}
         />
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
           className="grid lg:grid-cols-2 gap-4"
@@ -1206,14 +1206,17 @@ export default function TradingSettings() {
       <AnimatePresence>
         {showLiveWarning && (
           <motion.div
-            initial={{ opacity: 0 }}
+            initial={false}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="live-warning-title"
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
             onClick={() => setShowLiveWarning(false)}
           >
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
+              initial={false}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
@@ -1224,7 +1227,7 @@ export default function TradingSettings() {
                   <AlertTriangle className="w-5 h-5 text-red-400" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-zinc-200">
+                  <h3 id="live-warning-title" className="text-sm font-semibold text-zinc-200">
                     Switch to Live Trading?
                   </h3>
                   <p
@@ -1284,7 +1287,7 @@ function SectionHeader({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
       className="flex items-center gap-3 pt-2"
@@ -1332,7 +1335,7 @@ function BrokerCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
       className="card-glass rounded-2xl p-5 group relative"
@@ -1456,14 +1459,17 @@ function ConnectionModal({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0 }}
+      initial={false}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="broker-connect-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       onClick={onClose}
     >
       <motion.div
-        initial={{ scale: 0.95, opacity: 0, y: 20 }}
+        initial={false}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.95, opacity: 0, y: 20 }}
         transition={{ duration: 0.2 }}
@@ -1477,7 +1483,7 @@ function ConnectionModal({
               {BROKER_ICONS[broker.icon]}
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-zinc-200">
+              <h3 id="broker-connect-title" className="text-sm font-semibold text-zinc-200">
                 Connect to {broker.name}
               </h3>
               <p
@@ -1543,7 +1549,7 @@ function ConnectionModal({
         <AnimatePresence>
           {testResult && (
             <motion.div
-              initial={{ opacity: 0, height: 0 }}
+              initial={false}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
               className="mb-4"

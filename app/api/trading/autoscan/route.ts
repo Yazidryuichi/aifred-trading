@@ -5,7 +5,7 @@ import { detectRegime, MarketRegime } from "@/lib/hmm-regime";
 import { calculateConfirmations, type OHLCVCandle } from "@/lib/technical-indicators";
 import { loadStats, selectStrategy, computeConfidence } from "@/lib/strategy-learning";
 import { executeTrade, type ExecuteTradeParams } from "@/lib/execute-trade";
-import { lockedReadModifyWrite, atomicWriteFile } from "@/lib/file-lock";
+import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/lib/file-lock";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 const TMP_DIR = "/tmp/aifred-data";
 const DATA_DIR = join(process.cwd(), "data");
+const OPEN_POSITIONS_PATH = join(TMP_DIR, "open-positions.json");
 
 const DEFAULT_ASSETS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
 
@@ -134,6 +135,19 @@ function appendActivity(entry: Record<string, unknown>) {
   ).catch((e) => {
     console.error("Failed to append activity:", e);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Open positions persistence helpers
+// ---------------------------------------------------------------------------
+
+function loadPersistedPositions(): OpenPosition[] {
+  return readJsonWithFallback<OpenPosition[]>([OPEN_POSITIONS_PATH], []);
+}
+
+async function savePersistedPositions(positions: OpenPosition[]): Promise<void> {
+  ensureTmpDir();
+  await atomicWriteFile(OPEN_POSITIONS_PATH, JSON.stringify(positions, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -427,12 +441,14 @@ async function executeSignal(
 // ---------------------------------------------------------------------------
 
 export async function GET() {
+  const persistedPositions = loadPersistedPositions();
   return NextResponse.json({
     status: "ready",
     description: "Autonomous trading scan endpoint",
     usage: "POST with assets, mode, and optional autoExecute flag",
     defaultAssets: DEFAULT_ASSETS,
     defaultRiskLimits: DEFAULT_RISK_LIMITS,
+    openPositions: persistedPositions,
   });
 }
 
@@ -444,7 +460,11 @@ export async function POST(request: NextRequest) {
   const scanStartTime = Date.now();
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const rawBody = await request.text();
+    if (rawBody.length > 50_000) {
+      return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    }
+    const body = rawBody ? JSON.parse(rawBody) : {};
 
     const {
       assets = DEFAULT_ASSETS,
@@ -453,7 +473,7 @@ export async function POST(request: NextRequest) {
       brokerId,
       credentials,
       riskLimits: userRiskLimits,
-      openPositions: inputPositions = [],
+      openPositions: inputPositions,
     } = body as {
       assets?: string[];
       autoExecute?: boolean;
@@ -461,8 +481,14 @@ export async function POST(request: NextRequest) {
       brokerId?: string;
       credentials?: Record<string, string>;
       riskLimits?: Partial<RiskLimits>;
-      openPositions?: OpenPosition[];
+      openPositions?: OpenPosition[] | undefined;
     };
+
+    // Load persisted positions when none are provided in the request body
+    const effectivePositions: OpenPosition[] =
+      Array.isArray(inputPositions) && inputPositions.length > 0
+        ? inputPositions
+        : loadPersistedPositions();
 
     // Merge user risk limits with defaults
     const riskLimits: RiskLimits = { ...DEFAULT_RISK_LIMITS, ...userRiskLimits };
@@ -494,7 +520,7 @@ export async function POST(request: NextRequest) {
     // Scan all assets in parallel
     // -----------------------------------------------------------------------
     const scanPromises = assets.map((symbol) =>
-      scanAsset(symbol, inputPositions, riskLimits, dailyPnl).catch((err) => {
+      scanAsset(symbol, effectivePositions, riskLimits, dailyPnl).catch((err) => {
         console.error(`Scan failed for ${symbol}:`, err);
         return {
           scanResult: {
@@ -537,7 +563,7 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
     // Update open positions based on signals
     // -----------------------------------------------------------------------
-    const updatedPositions: OpenPosition[] = [...inputPositions];
+    const updatedPositions: OpenPosition[] = [...effectivePositions];
 
     for (const signal of allSignals) {
       if (signal.type === "enter") {
@@ -582,6 +608,9 @@ export async function POST(request: NextRequest) {
 
     // Save updated daily PnL
     saveDailyPnl(dailyPnl);
+
+    // Persist updated positions to file for crash recovery
+    await savePersistedPositions(updatedPositions);
 
     // -----------------------------------------------------------------------
     // Enrich positions with current prices and unrealized PnL

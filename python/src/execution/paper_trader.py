@@ -13,6 +13,60 @@ from src.utils.types import AssetClass, OrderType, Position, TradeResult, TradeS
 logger = logging.getLogger(__name__)
 
 
+def estimate_slippage_bps(
+    symbol: str,
+    trade_value: float = 0.0,
+    current_atr: float = 0.0,
+    historical_avg_atr: float = 0.0,
+    avg_daily_volume: float = 0.0,
+) -> float:
+    """Estimate realistic slippage in basis points using a volatility-scaled model.
+
+    Base slippage (bps) = base_rate * volatility_multiplier * size_multiplier
+      * volatility_multiplier = current_atr / historical_avg_atr (clamped 0.5–3.0)
+      * size_multiplier      = trade_value / avg_daily_volume * 10 (floor 1.0)
+      * noise                = uniform jitter +/-20%
+
+    Args:
+        symbol: Trading pair, e.g. "BTC/USDT".
+        trade_value: Notional value of the order in quote currency.
+        current_atr: Current ATR (or realized volatility measure).
+        historical_avg_atr: Long-run average ATR for the same asset.
+        avg_daily_volume: Average daily *notional* volume (quote currency).
+
+    Returns:
+        Estimated slippage in basis points (bps).
+    """
+    sym_upper = symbol.upper()
+
+    # Asset-class base rates (bps) reflecting typical spread/depth
+    if "BTC" in sym_upper:
+        base_rate = 3.0
+    elif "ETH" in sym_upper:
+        base_rate = 4.0
+    elif any(t in sym_upper for t in ("SOL", "BNB", "XRP", "ADA", "AVAX", "DOT", "DOGE", "MATIC")):
+        base_rate = 5.0
+    else:
+        base_rate = 2.0  # Forex / large-cap equity default
+
+    # Volatility multiplier
+    if current_atr > 0 and historical_avg_atr > 0:
+        vol_mult = max(0.5, min(3.0, current_atr / historical_avg_atr))
+    else:
+        vol_mult = 1.0
+
+    # Size-impact multiplier
+    if avg_daily_volume > 0 and trade_value > 0:
+        size_mult = max(1.0, trade_value / avg_daily_volume * 10.0)
+    else:
+        size_mult = 1.0
+
+    # Random noise (+/- 20%)
+    noise = 1.0 + (random.random() - 0.5) * 0.4
+
+    return base_rate * vol_mult * size_mult * noise
+
+
 class PaperTrader:
     """Simulated exchange connector for paper trading.
 
@@ -33,6 +87,15 @@ class PaperTrader:
         self._prices: Dict[str, float] = {}  # symbol -> simulated current price
         self._trade_history: List[Dict[str, Any]] = []
         self.db_path = db_path
+
+        # Volatility / liquidity context for realistic slippage estimation.
+        # Callers should populate these via ``set_market_context()`` when data
+        # is available; otherwise the slippage model falls back to asset-class
+        # base rates with vol_mult=1 and size_mult=1.
+        self._atr_current: Dict[str, float] = {}
+        self._atr_historical: Dict[str, float] = {}
+        self._avg_daily_volume: Dict[str, float] = {}
+
         self._init_db()
 
     def _init_db(self) -> None:
@@ -69,6 +132,28 @@ class PaperTrader:
         """Set the simulated current price for a symbol."""
         self._prices[symbol] = price
 
+    def set_market_context(
+        self,
+        symbol: str,
+        current_atr: float = 0.0,
+        historical_avg_atr: float = 0.0,
+        avg_daily_volume: float = 0.0,
+    ) -> None:
+        """Provide volatility / liquidity context for slippage estimation.
+
+        Args:
+            symbol: Trading pair, e.g. "BTC/USDT".
+            current_atr: Most recent ATR value.
+            historical_avg_atr: Long-run average ATR.
+            avg_daily_volume: Average daily notional volume (quote currency).
+        """
+        if current_atr > 0:
+            self._atr_current[symbol] = current_atr
+        if historical_avg_atr > 0:
+            self._atr_historical[symbol] = historical_avg_atr
+        if avg_daily_volume > 0:
+            self._avg_daily_volume[symbol] = avg_daily_volume
+
     def _get_price(self, symbol: str) -> float:
         price = self._prices.get(symbol)
         if price is None:
@@ -76,16 +161,29 @@ class PaperTrader:
         return price
 
     def _simulate_fill_price(self, symbol: str, side: str,
-                             order_type: str) -> float:
-        """Calculate a realistic fill price with slippage."""
+                             order_type: str,
+                             amount: float = 0.0) -> float:
+        """Calculate a realistic fill price with volatility-scaled slippage.
+
+        Uses ``estimate_slippage_bps`` for market orders, which accounts for
+        asset type, volatility (ATR), and position size vs liquidity.
+        Limit orders still fill at the requested price (no slippage).
+        """
         base_price = self._get_price(symbol)
         if order_type == "market":
-            # Random slippage within configured range
-            slip = random.uniform(0, self.slippage_pct)
+            trade_value = amount * base_price if amount > 0 else 0.0
+            slip_bps = estimate_slippage_bps(
+                symbol=symbol,
+                trade_value=trade_value,
+                current_atr=self._atr_current.get(symbol, 0.0),
+                historical_avg_atr=self._atr_historical.get(symbol, 0.0),
+                avg_daily_volume=self._avg_daily_volume.get(symbol, 0.0),
+            )
+            slip_frac = slip_bps / 10_000.0
             if side == "buy":
-                return base_price * (1 + slip)
+                return base_price * (1 + slip_frac)
             else:
-                return base_price * (1 - slip)
+                return base_price * (1 - slip_frac)
         # Limit orders fill at the requested price (no slippage)
         return base_price
 
@@ -116,7 +214,7 @@ class PaperTrader:
         """Simulate placing an order with realistic fills."""
         order_id = str(uuid.uuid4())[:12]
 
-        fill_price = self._simulate_fill_price(symbol, side, order_type)
+        fill_price = self._simulate_fill_price(symbol, side, order_type, amount=amount)
         fees = self._calculate_fees(amount, fill_price)
         slippage = 0.0
         if price and price > 0:

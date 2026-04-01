@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL || "https://aifred-orchestrator-production.up.railway.app";
+const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL;
 
 interface ComponentHealth {
   name: string;
@@ -18,6 +18,15 @@ interface SystemHealthResponse {
 }
 
 async function checkRailwayOrchestrator(): Promise<ComponentHealth> {
+  if (!RAILWAY_URL) {
+    return {
+      name: "Python Orchestrator",
+      status: "down",
+      latencyMs: null,
+      message: "Backend not configured: RAILWAY_BACKEND_URL environment variable is missing",
+    };
+  }
+
   const start = Date.now();
   try {
     const controller = new AbortController();

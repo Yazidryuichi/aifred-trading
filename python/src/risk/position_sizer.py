@@ -46,9 +46,11 @@ def streak_multiplier(
 ) -> float:
     """Calculate position size multiplier based on win/loss streaks.
 
-    Win streaks (momentum sizing):
-    - After 5+ consecutive wins: +30% size
-    - After 3+ consecutive wins: +20% size
+    Win streaks:
+    - Capped per Kelly principle — winning streaks don't increase edge
+      probability. Mean reversion makes streak-based boosts dangerous as
+      they increase tail risk right when a drawdown is most likely.
+    - Max win-streak boost: 1.05x (essentially negligible).
 
     Loss streaks (protective sizing):
     - After 6+ consecutive losses: -80% size (near stop trading)
@@ -62,10 +64,10 @@ def streak_multiplier(
     Returns:
         Multiplier to apply to position size.
     """
-    if consecutive_wins >= 5:
-        return 1.30  # 30% boost for extended win streak
+    # Capped per Kelly principle — winning streaks don't increase edge probability.
+    # Previous values (1.20x–1.30x) dramatically increased tail risk at peak streak.
     if consecutive_wins >= 3:
-        return 1.20  # 20% boost for win streak momentum
+        return 1.05  # Negligible boost; streaks are not predictive of future edge
     if consecutive_losses >= 6:
         return 0.20  # 80% reduction -- near stop trading
     if consecutive_losses >= 4:

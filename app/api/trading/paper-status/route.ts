@@ -2,9 +2,17 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL || "https://aifred-orchestrator-production.up.railway.app";
+const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL;
 
 export async function GET() {
+  if (!RAILWAY_URL) {
+    return NextResponse.json({
+      running: false,
+      source: "railway",
+      error: "Backend not configured: RAILWAY_BACKEND_URL environment variable is missing",
+    });
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);

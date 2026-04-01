@@ -16,6 +16,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -164,6 +166,40 @@ class PatternCNNNetwork(nn.Module):
         return pattern_logits, direction_logits, confidence
 
 
+class _EarlyStopping:
+    """Stop training when validation loss stops improving.
+
+    Saves the best model weights (by validation loss) and restores them
+    when patience is exhausted or training completes.
+    """
+
+    def __init__(self, patience: int = 7, min_delta: float = 0.0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss: Optional[float] = None
+        self.best_weights: Optional[dict] = None
+        self.counter = 0
+        self.stopped_epoch = 0
+
+    def step(self, val_loss: float, model: nn.Module, epoch: int) -> bool:
+        """Return True if training should stop."""
+        if self.best_loss is None or val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.best_weights = copy.deepcopy(model.state_dict())
+            self.counter = 0
+            return False
+        self.counter += 1
+        if self.counter >= self.patience:
+            self.stopped_epoch = epoch
+            return True
+        return False
+
+    def restore_best(self, model: nn.Module) -> None:
+        """Load the best weights back into the model."""
+        if self.best_weights is not None:
+            model.load_state_dict(self.best_weights)
+
+
 class PatternCNN:
     """Train/predict interface for the pattern detection CNN."""
 
@@ -176,6 +212,8 @@ class PatternCNN:
         epochs: int = 100,
         batch_size: int = 64,
         device: Optional[str] = None,
+        val_split: float = 0.2,
+        early_stopping_patience: int = 7,
     ):
         self.input_channels = input_channels
         self.seq_length = seq_length
@@ -183,6 +221,8 @@ class PatternCNN:
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.batch_size = batch_size
+        self.val_split = val_split
+        self.early_stopping_patience = early_stopping_patience
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -202,6 +242,7 @@ class PatternCNN:
         self.direction_criterion = nn.CrossEntropyLoss()
 
         self.train_losses: list = []
+        self.val_losses: list = []
         self.is_trained = False
 
     def prepare_input(self, df_ohlcv: np.ndarray) -> np.ndarray:
@@ -243,7 +284,13 @@ class PatternCNN:
         y_direction: np.ndarray,
         epochs: Optional[int] = None,
     ) -> Dict[str, list]:
-        """Train the pattern CNN.
+        """Train the pattern CNN with validation split and early stopping.
+
+        Uses a time-based split (last ``val_split`` fraction of samples as
+        validation) which is more appropriate for financial time-series than
+        a random split — it prevents future data from leaking into training.
+
+        Best model weights (by validation loss) are restored at the end.
 
         Args:
             X: Input (n_samples, channels, seq_length).
@@ -252,26 +299,48 @@ class PatternCNN:
             epochs: Override default.
 
         Returns:
-            Training history.
+            Training history with train_loss and val_loss.
         """
         if epochs is None:
             epochs = self.epochs
 
-        X_t = torch.FloatTensor(X).to(self.device)
-        yp_t = torch.FloatTensor(y_patterns).to(self.device)
-        yd_t = torch.LongTensor(y_direction).to(self.device)
+        # --- Time-based train / validation split (no shuffle across split) ---
+        n_samples = X.shape[0]
+        n_val = max(1, int(n_samples * self.val_split))
+        n_train = n_samples - n_val
 
-        dataset = TensorDataset(X_t, yp_t, yd_t)
-        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        X_train = torch.FloatTensor(X[:n_train]).to(self.device)
+        yp_train = torch.FloatTensor(y_patterns[:n_train]).to(self.device)
+        yd_train = torch.LongTensor(y_direction[:n_train]).to(self.device)
+
+        X_val = torch.FloatTensor(X[n_train:]).to(self.device)
+        yp_val = torch.FloatTensor(y_patterns[n_train:]).to(self.device)
+        yd_val = torch.LongTensor(y_direction[n_train:]).to(self.device)
+
+        train_dataset = TensorDataset(X_train, yp_train, yd_train)
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+
+        val_dataset = TensorDataset(X_val, yp_val, yd_val)
+        val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
 
         self.train_losses = []
-        self.model.train()
+        self.val_losses = []
+
+        early_stopper = _EarlyStopping(patience=self.early_stopping_patience)
+
+        logger.info(
+            "PatternCNN training: %d train / %d val samples, max %d epochs, "
+            "early-stop patience=%d",
+            n_train, n_val, epochs, self.early_stopping_patience,
+        )
 
         for epoch in range(epochs):
+            # --- Training pass ---
+            self.model.train()
             epoch_loss = 0.0
             n_batches = 0
 
-            for X_b, yp_b, yd_b in loader:
+            for X_b, yp_b, yd_b in train_loader:
                 self.optimizer.zero_grad()
                 pat_logits, dir_logits, _ = self.model(X_b)
 
@@ -285,17 +354,51 @@ class PatternCNN:
                 epoch_loss += loss.item()
                 n_batches += 1
 
-            avg_loss = epoch_loss / max(n_batches, 1)
-            self.train_losses.append(avg_loss)
+            avg_train_loss = epoch_loss / max(n_batches, 1)
+            self.train_losses.append(avg_train_loss)
 
-            if (epoch + 1) % 20 == 0:
+            # --- Validation pass ---
+            self.model.eval()
+            val_loss = 0.0
+            val_batches = 0
+            with torch.no_grad():
+                for X_b, yp_b, yd_b in val_loader:
+                    pat_logits, dir_logits, _ = self.model(X_b)
+                    loss_pattern = self.pattern_criterion(pat_logits, yp_b)
+                    loss_direction = self.direction_criterion(dir_logits, yd_b)
+                    val_loss += (loss_pattern + loss_direction).item()
+                    val_batches += 1
+
+            avg_val_loss = val_loss / max(val_batches, 1)
+            self.val_losses.append(avg_val_loss)
+
+            if (epoch + 1) % 10 == 0 or epoch == 0:
                 logger.info(
-                    f"PatternCNN epoch {epoch + 1}/{epochs}: loss={avg_loss:.4f}"
+                    "PatternCNN epoch %d/%d: train_loss=%.4f  val_loss=%.4f",
+                    epoch + 1, epochs, avg_train_loss, avg_val_loss,
                 )
 
+            # --- Early stopping check ---
+            if early_stopper.step(avg_val_loss, self.model, epoch):
+                logger.info(
+                    "PatternCNN early stopping at epoch %d (best val_loss=%.4f at epoch %d)",
+                    epoch + 1, early_stopper.best_loss,
+                    epoch + 1 - early_stopper.patience,
+                )
+                break
+
+        # Restore the best model weights (lowest validation loss)
+        early_stopper.restore_best(self.model)
         self.model.eval()
         self.is_trained = True
-        return {"train_loss": self.train_losses}
+
+        logger.info(
+            "PatternCNN training complete: best val_loss=%.4f, %d epochs run",
+            early_stopper.best_loss or self.val_losses[-1],
+            len(self.train_losses),
+        )
+
+        return {"train_loss": self.train_losses, "val_loss": self.val_losses}
 
     def predict(
         self, X: np.ndarray, asset: str = "", timeframe: str = "1h"

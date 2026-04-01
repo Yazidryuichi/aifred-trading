@@ -367,7 +367,7 @@ function ExecuteTradeModal({
   }, [symbol, side, quantity, orderType, tradeMode, selectedBroker, onTradeExecuted]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="execute-trade-title">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -375,7 +375,7 @@ function ExecuteTradeModal({
       />
       {/* Modal */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ duration: 0.2 }}
@@ -396,7 +396,7 @@ function ExecuteTradeModal({
                   <ArrowUpDown className="w-4 h-4 text-emerald-400" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
+                  <h2 id="execute-trade-title" className="text-base font-bold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
                     Execute Trade
                   </h2>
                   <p className="text-[11px] tracking-wider" style={{ fontFamily: "JetBrains Mono, monospace", color: tradeMode === "live" ? "#4ade80" : "#a78bfa" }}>
@@ -406,6 +406,7 @@ function ExecuteTradeModal({
               </div>
               <button
                 onClick={onClose}
+                aria-label="Close trade modal"
                 className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center hover:bg-white/[0.08] transition-colors text-zinc-500 hover:text-zinc-300"
               >
                 <X className="w-4 h-4" />
@@ -875,7 +876,7 @@ export default function TradingDashboard() {
     return (
       <div className="min-h-screen bg-[#06060a] flex items-center justify-center">
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={false}
           animate={{ opacity: 1 }}
           className="flex flex-col items-center gap-4"
         >
@@ -1000,6 +1001,7 @@ export default function TradingDashboard() {
                 onClick={() => router.push("/trading/settings")}
                 className="w-9 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center hover:bg-white/[0.08] hover:border-white/[0.12] transition-all text-zinc-500 hover:text-zinc-300"
                 title="Settings"
+                aria-label="Open settings"
               >
                 <Settings className="w-4 h-4" />
               </button>
@@ -1007,10 +1009,14 @@ export default function TradingDashboard() {
           </div>
 
           {/* Nav tabs — scrollable on mobile */}
-          <div className="flex gap-1 bg-white/[0.03] rounded-lg p-1 overflow-x-auto">
+          <div className="flex gap-1 bg-white/[0.03] rounded-lg p-1 overflow-x-auto" role="tablist" aria-label="Dashboard navigation">
             {(["overview", "regime", "trades", "activity", "agents"] as const).map((tab) => (
               <button
                 key={tab}
+                role="tab"
+                aria-selected={activeTab === tab}
+                aria-controls={`tabpanel-${tab}`}
+                id={`tab-${tab}`}
                 onClick={() => setActiveTab(tab)}
                 className={`flex-1 md:flex-none px-3 md:px-4 py-1.5 text-xs font-medium rounded-md transition-all tracking-wider uppercase whitespace-nowrap ${
                   activeTab === tab
@@ -1027,13 +1033,15 @@ export default function TradingDashboard() {
       </header>
 
       {/* ─── Trade Execution Toast ───────────────────────── */}
+      <div aria-live="polite" aria-atomic="true">
       <AnimatePresence>
         {tradeToast && (
           <motion.div
-            initial={{ opacity: 0, y: -16 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.25 }}
+            role="status"
             className="fixed top-20 right-6 z-40 w-80"
             style={{
               background: "linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(10,10,15,0.98) 100%)",
@@ -1086,12 +1094,13 @@ export default function TradingDashboard() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* ─── Welcome Panel (first visit) ──────────────────── */}
       <AnimatePresence>
         {showWelcome && (
           <motion.div
-            initial={{ opacity: 0, y: -8 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, height: 0 }}
             className="relative z-10 max-w-[1600px] mx-auto px-4 md:px-6 pt-4"
@@ -1137,6 +1146,7 @@ export default function TradingDashboard() {
                 </div>
                 <button
                   onClick={() => { setShowWelcome(false); localStorage.setItem("aifred_welcomed", "1"); }}
+                  aria-label="Dismiss welcome panel"
                   className="text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
                 >
                   <X className="w-4 h-4" />
@@ -1148,7 +1158,7 @@ export default function TradingDashboard() {
       </AnimatePresence>
 
       {/* ─── Content ────────────────────────────────────────── */}
-      <main className="relative z-10 max-w-[1600px] mx-auto px-6 py-6">
+      <main id="main-content" className="relative z-10 max-w-[1600px] mx-auto px-6 py-6" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
         <AnimatePresence mode="wait">
           {activeTab === "overview" && (
             <OverviewTab
@@ -1347,7 +1357,7 @@ function RegimeTab() {
   if (regimeLoading && backtestLoading) {
     return (
       <motion.div
-        initial={{ opacity: 0 }}
+        initial={false}
         animate={{ opacity: 1 }}
         className="flex items-center justify-center py-32"
       >
@@ -1370,7 +1380,7 @@ function RegimeTab() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3 }}
@@ -1868,7 +1878,7 @@ function LiveStatusPanel() {
   if (loading) {
     return (
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         className="card-glass rounded-2xl p-6"
       >
@@ -1888,7 +1898,7 @@ function LiveStatusPanel() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.05 }}
       className="space-y-4"
@@ -2288,7 +2298,7 @@ function OverviewTab({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3 }}
@@ -2297,9 +2307,10 @@ function OverviewTab({
       {/* ─── Activity Summary Bar ─────────────────────────── */}
       {recentActivity.length > 0 && (
         <motion.div
-          initial={{ opacity: 0, y: -4 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.05 }}
+          aria-live="polite"
           className="card-glass rounded-xl px-4 py-2.5 flex items-center gap-2 overflow-x-auto cursor-pointer hover:border-white/[0.12] transition-all"
           onClick={onNavigateActivity}
         >
@@ -2418,7 +2429,7 @@ function OverviewTab({
 
       {/* ─── Equity Curve ───────────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
         className="card-glass rounded-2xl p-6"
@@ -2519,7 +2530,7 @@ function OverviewTab({
       <div className="grid lg:grid-cols-3 gap-4">
         {/* By Asset */}
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25 }}
           className="card-glass rounded-2xl p-5"
@@ -2539,7 +2550,7 @@ function OverviewTab({
 
         {/* By Strategy */}
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
           className="card-glass rounded-2xl p-5"
@@ -2559,7 +2570,7 @@ function OverviewTab({
 
         {/* By Signal Tier */}
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
           className="card-glass rounded-2xl p-5"
@@ -2651,7 +2662,7 @@ function OverviewTab({
 
       {/* ─── Risk metrics bar ───────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
+        initial={false}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
         className="card-glass rounded-2xl p-5"
@@ -2709,7 +2720,7 @@ function TradesTab({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3 }}
@@ -2919,7 +2930,7 @@ function ActivityTab() {
   if (loading) {
     return (
       <motion.div
-        initial={{ opacity: 0 }}
+        initial={false}
         animate={{ opacity: 1 }}
         className="flex items-center justify-center py-20"
       >
@@ -2930,7 +2941,7 @@ function ActivityTab() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3 }}
@@ -3014,7 +3025,7 @@ function ActivityTab() {
               return (
                 <motion.div
                   key={trade.id}
-                  initial={{ opacity: 0, y: 4 }}
+                  initial={false}
                   animate={{ opacity: 1, y: 0 }}
                   className={`rounded-xl border border-emerald-500/10 bg-emerald-500/[0.03] overflow-hidden border-l-[3px] ${borderColor}`}
                 >
@@ -3070,7 +3081,7 @@ function ActivityTab() {
                   <AnimatePresence>
                     {isExpanded && trade.details && (
                       <motion.div
-                        initial={{ height: 0, opacity: 0 }}
+                        initial={false}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.2 }}
@@ -3174,7 +3185,7 @@ function ActivityTab() {
               return (
                 <motion.div
                   key={entry.id}
-                  initial={{ opacity: 0, x: -12 }}
+                  initial={false}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: i * 0.03 }}
                   className={tradeBorderClass ? `rounded-lg ${tradeBorderClass}` : ""}
@@ -3275,7 +3286,7 @@ function ActivityTab() {
                   <AnimatePresence>
                     {isExpanded && entry.details && (
                       <motion.div
-                        initial={{ height: 0, opacity: 0 }}
+                        initial={false}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.2 }}
@@ -3542,7 +3553,7 @@ function AgentsTab({ data }: { data: TradingData }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.3 }}
@@ -3552,7 +3563,7 @@ function AgentsTab({ data }: { data: TradingData }) {
         {agents.map((agent, i) => (
           <motion.div
             key={agent.name}
-            initial={{ opacity: 0, y: 16 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.06 }}
             className="card-glass rounded-2xl p-5 group"
@@ -3724,7 +3735,7 @@ function HeroStat({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay }}
       className={`card-glass rounded-2xl p-5 relative overflow-hidden ${
@@ -3955,7 +3966,7 @@ function TradeRow({
       <AnimatePresence>
         {expanded && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
+            initial={false}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}

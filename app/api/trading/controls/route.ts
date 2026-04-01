@@ -105,7 +105,11 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+    if (rawBody.length > 1_000) {
+      return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    }
+    const body = JSON.parse(rawBody);
     const { action, mode, scanInterval, assets } = body as {
       action: "start" | "stop" | "toggle_mode";
       mode?: "paper" | "live";

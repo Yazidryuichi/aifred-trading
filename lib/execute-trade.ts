@@ -193,6 +193,44 @@ function appendActivity(entry: Record<string, unknown>) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: volatility-scaled slippage estimation
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate realistic slippage in basis points.
+ *
+ * Model:  base_rate * volMultiplier * sizeMultiplier * noise
+ *   - base_rate:      asset-class dependent (BTC=3, ETH=4, altcoins=5, other=2 bps)
+ *   - volMultiplier:  current_vol / avg_vol, clamped [0.5, 3.0]
+ *   - sizeMultiplier: tradeValue / avgDailyVolume * 10, floor 1.0
+ *   - noise:          uniform jitter +/-20%
+ */
+function estimateSlippage(params: {
+  asset: string;
+  size: number;          // notional trade value in quote currency
+  volatility?: number;   // e.g. ATR ratio (current / historical)
+  avgVolume?: number;    // average daily notional volume
+}): number {
+  const sym = params.asset.toUpperCase();
+  let baseRate: number;
+  if (sym.includes("BTC"))       baseRate = 3;
+  else if (sym.includes("ETH")) baseRate = 4;
+  else if (["SOL", "BNB", "XRP", "ADA", "AVAX", "DOT", "DOGE", "MATIC"].some((t) => sym.includes(t)))
+    baseRate = 5;
+  else baseRate = 2; // forex / equities default
+
+  const volMultiplier = params.volatility
+    ? Math.max(0.5, Math.min(3.0, params.volatility))
+    : 1.0;
+  const sizeMultiplier =
+    params.avgVolume && params.avgVolume > 0
+      ? Math.max(1.0, (params.size / params.avgVolume) * 10)
+      : 1.0;
+  const noise = 1 + (Math.random() - 0.5) * 0.4;
+  return baseRate * volMultiplier * sizeMultiplier * noise; // bps
+}
+
+// ---------------------------------------------------------------------------
 // Helper: risk assessment
 // ---------------------------------------------------------------------------
 
@@ -738,7 +776,11 @@ export async function executeTrade(params: ExecuteTradeParams): Promise<ExecuteT
   const livePrice = await getLivePrice(symbol);
   const basePrice = price || livePrice || MOCK_PRICES[symbol] || 100.0;
   const priceSource = livePrice ? "live" : "mock";
-  const slippage = basePrice * (0.0001 + Math.random() * 0.0005);
+
+  // Volatility-scaled slippage model (replaces uniform random 0-5 bps).
+  // Base rate depends on asset class; multiplied by volatility & size factors.
+  const slippageBps = estimateSlippage({ asset: symbol, size: quantity * basePrice });
+  const slippage = basePrice * (slippageBps / 10_000);
   const executionPrice = orderType === "market"
     ? side === "LONG" ? basePrice + slippage : basePrice - slippage
     : basePrice;

@@ -1,12 +1,5 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import dynamic from "next/dynamic";
-
-const TradingSettings = dynamic(
-  () => import("@/components/trading/TradingSettings"),
-  { ssr: false }
-);
-
-export default function SettingsPage() {
-  return <TradingSettings />;
+export default function SettingsRedirect() {
+  redirect("/trading/settings");
 }
