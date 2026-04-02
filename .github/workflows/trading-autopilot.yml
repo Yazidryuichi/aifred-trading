@@ -1,9 +1,9 @@
 name: AIFred Trading Autopilot
 
 on:
-  schedule:
-    # Run every 12 hours at 00:00 and 12:00 UTC
-    - cron: '0 0,12 * * *'
+  # Schedule disabled — trading engine runs on Railway, not GitHub Actions
+  # schedule:
+  #   - cron: '0 0,12 * * *'
   workflow_dispatch:
     inputs:
       mode:

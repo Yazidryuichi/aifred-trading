@@ -18,4 +18,12 @@ __pycache__/
 
 # OS
 .DS_Store
+**/.DS_Store
 .vercel
+
+# Logs and archives
+*.log
+*.zip
+
+# Runtime data (should not be committed)
+python/paper_trading.log
