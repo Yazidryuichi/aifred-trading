@@ -63,13 +63,11 @@ export function selectStrategy(stats: StrategyStats[]): string {
 // Compute confidence based on strategy's historical accuracy
 export function computeConfidence(stats: StrategyStats[], strategy: string): number {
   const stat = stats.find(s => s.strategy_name === strategy);
-  if (!stat || stat.total_trades < 5) return 70 + Math.floor(Math.random() * 15);
+  if (!stat || stat.total_trades < 5) return 0; // Insufficient data — no confidence assigned
 
   // Base confidence from win rate (scaled 60-95)
   const base = 60 + stat.ema_win_rate * 35;
-  // Add small random variation (+-3%)
-  const variation = (Math.random() - 0.5) * 6;
-  return Math.max(55, Math.min(95, Math.round(base + variation)));
+  return Math.max(55, Math.min(95, Math.round(base)));
 }
 
 // Update stats after a trade executes (simulate outcome based on confidence)

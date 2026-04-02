@@ -9,6 +9,7 @@
 
 import { readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { createDecipheriv, createHash } from "crypto";
 import { loadStats, selectStrategy, computeConfidence, recordTradeOutcome } from "@/lib/strategy-learning";
 import { detectRegime, getRegimeAction } from "@/lib/hmm-regime";
 import { calculateConfirmations, type OHLCVCandle } from "@/lib/technical-indicators";
@@ -147,11 +148,57 @@ function normalizeSymbol(raw: string): string {
 // Helper: broker secrets / connections
 // ---------------------------------------------------------------------------
 
+/**
+ * Derive the same 32-byte AES key used by brokers/route.ts for credential encryption.
+ * Key is derived from NEXTAUTH_SECRET via SHA-256, matching the encrypt path exactly.
+ */
+function getEncryptionKey(): Buffer {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) {
+    throw new Error("NEXTAUTH_SECRET is not set — cannot decrypt broker credentials.");
+  }
+  return createHash("sha256").update(secret).digest();
+}
+
+interface EncryptedPayload {
+  iv: string;   // hex
+  tag: string;  // hex
+  data: string; // hex
+}
+
+/**
+ * Decrypt AES-256-GCM encrypted credentials.
+ * Must match the encryptCredentials() in app/api/trading/brokers/route.ts.
+ */
+function decryptCredentials(encrypted: string): object {
+  const key = getEncryptionKey();
+  const payload: EncryptedPayload = JSON.parse(encrypted);
+
+  const iv = Buffer.from(payload.iv, "hex");
+  const tag = Buffer.from(payload.tag, "hex");
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+
+  let decrypted = decipher.update(payload.data, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return JSON.parse(decrypted);
+}
+
 function readBrokerSecrets(): Record<string, Record<string, string>> {
   if (!existsSync(SECRETS_PATH)) return {};
   try {
-    return JSON.parse(readFileSync(SECRETS_PATH, "utf-8"));
-  } catch {
+    const raw = readFileSync(SECRETS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+
+    // Detect plaintext JSON (no iv/tag/data envelope) — legacy/migration case
+    if (parsed && typeof parsed === "object" && !parsed.iv && !parsed.tag && !parsed.data) {
+      return parsed as Record<string, Record<string, string>>;
+    }
+
+    // Encrypted payload — decrypt with AES-256-GCM
+    return decryptCredentials(raw) as Record<string, Record<string, string>>;
+  } catch (err) {
+    console.error("[execute-trade] Failed to read/decrypt broker secrets:", err);
     return {};
   }
 }

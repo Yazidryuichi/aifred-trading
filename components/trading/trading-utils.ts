@@ -23,6 +23,7 @@ export interface TradingData {
     totalTrades: number;
     openPositions: number;
     sharpeRatio: number;
+    sortinoRatio: number | null;
     maxDrawdown: number;
     profitFactor: number;
     avgWin: number;

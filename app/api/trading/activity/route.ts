@@ -190,40 +190,17 @@ function enrichTradeDetails(details: ActivityDetails): ActivityDetails {
   return enriched;
 }
 
-function generateTechnicalSignals(asset: string): string {
-  const rsi = (20 + Math.random() * 60).toFixed(1);
-  const indicators: string[] = [];
-  const rsiVal = parseFloat(rsi);
-  if (rsiVal < 30) indicators.push(`RSI oversold (${rsi})`);
-  else if (rsiVal > 70) indicators.push(`RSI overbought (${rsi})`);
-  else indicators.push(`RSI neutral (${rsi})`);
-
-  if (Math.random() > 0.5) indicators.push("MACD bullish crossover");
-  else indicators.push("MACD histogram expanding");
-
-  if (Math.random() > 0.4) indicators.push("price above SMA50");
-  else indicators.push("EMA20/50 golden cross");
-
-  if (Math.random() > 0.6) indicators.push("volume surge +35%");
-
-  return indicators.join(", ");
+function generateTechnicalSignals(_asset: string): string {
+  return "Technical signals unavailable — no live indicator data";
 }
 
 function generateSentimentSignals(): string {
-  const finbert = (0.5 + Math.random() * 0.45).toFixed(2);
-  const fg = Math.floor(40 + Math.random() * 40);
-  const sentiment = parseFloat(finbert) > 0.65 ? "bullish" : "neutral-bullish";
-  const social = Math.random() > 0.4 ? "positive" : "mixed";
-  return `FinBERT: ${sentiment} (${finbert}), social consensus: ${social}, Fear & Greed: ${fg}`;
+  return "Sentiment signals unavailable — no live sentiment data";
 }
 
 function generateRiskAssessment(details: ActivityDetails): string {
-  const kelly = (1 + Math.random() * 3).toFixed(1);
-  const rr = (1.5 + Math.random() * 2).toFixed(1);
-  const parts = [`Kelly size: ${kelly}% of portfolio`];
+  const parts = ["Risk assessment unavailable — no live risk data"];
   if (details.stop_loss) parts.push(`stop: $${details.stop_loss}`);
-  else parts.push(`ATR stop: $${(Math.random() * 5).toFixed(4)}`);
-  parts.push(`R:R ratio ${rr}:1`);
   return parts.join(", ");
 }
 
@@ -268,14 +245,13 @@ function generateSeedActivities(): ActivityEntry[] {
 
   // Scan completes
   for (let h = 22; h >= 1; h -= 3) {
-    const asset = assets[Math.floor(Math.random() * assets.length)];
     entries.push({
       id: generateId(),
-      timestamp: new Date(now - h * 3600_000 - Math.random() * 1800_000).toISOString(),
+      timestamp: new Date(now - h * 3600_000).toISOString(),
       type: "scan_complete",
       severity: "info",
       title: "Market Scan Complete",
-      message: `Scanned ${5 + Math.floor(Math.random() * 10)} assets. Found ${Math.floor(Math.random() * 4)} actionable signals.`,
+      message: `Scanned 8 assets. Scan completed.`,
       details: {},
     });
   }

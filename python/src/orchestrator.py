@@ -72,8 +72,9 @@ class CircuitBreaker:
         risk_cfg = config.get("risk", {})
         exec_cfg = config.get("execution", {})
 
-        self.max_daily_trades = orch_cfg.get("max_trades_per_day", 20)
-        self.max_daily_loss_pct = risk_cfg.get("max_daily_drawdown_pct", 5.0)
+        self.max_daily_trades = orch_cfg.get("max_daily_trades", 8)
+        safety_cfg = config.get("safety", {})
+        self.max_daily_loss_pct = safety_cfg.get("daily_loss_limit_pct", 2.0)
         self.max_consecutive_failures = exec_cfg.get("max_consecutive_failures", 3)
 
         self._daily_trade_count: int = 0
@@ -192,13 +193,13 @@ class Orchestrator:
         orch_cfg = config.get("orchestrator", {})
 
         # Core parameters
-        self.scan_interval = orch_cfg.get("scan_interval_seconds", 60)
+        self.scan_interval = config.get("system", {}).get("scan_interval", 60)
         self.min_confidence = orch_cfg.get("min_confidence_threshold", 78)
         self.signal_weights = orch_cfg.get("signal_weights", {
             "technical": 0.60,
             "sentiment": 0.40,
         })
-        self.max_daily_trades = orch_cfg.get("max_trades_per_day", 20)
+        self.max_daily_trades = orch_cfg.get("max_daily_trades", 8)
 
         # Trading mode
         exec_cfg = config.get("execution", {})
@@ -741,6 +742,16 @@ class Orchestrator:
             self._scan_count, elapsed, signals_generated, trades_executed,
             exits_processed,
         )
+
+        # Write heartbeat file so the health server knows the loop is alive
+        try:
+            heartbeat_dir = self.config.get("data", {}).get("base_dir", "data")
+            os.makedirs(heartbeat_dir, exist_ok=True)
+            heartbeat_path = os.path.join(heartbeat_dir, ".heartbeat")
+            with open(heartbeat_path, "w") as hb:
+                hb.write(str(time.time()))
+        except Exception as e:
+            logger.warning("Failed to write heartbeat file: %s", e)
 
     async def _run_periodic_reconciliation(self) -> None:
         """Run periodic position reconciliation if enough time has elapsed.
@@ -1331,13 +1342,13 @@ class Orchestrator:
                 + onchain_dir * adj_onchain
             ) / total_weight
 
-            # Weighted geometric mean (on-chain confidence is 0-1, scale to %)
-            onchain_conf_pct = onchain_signal.confidence * 100.0
+            # Weighted geometric mean — normalize all confidences to 0-1 scale first
+            # tech/sentiment confidence is 0-100, on-chain confidence is already 0-1
             fused_confidence = (
-                (tech_signal.confidence ** adj_tech)
-                * (sentiment_signal.confidence ** adj_sent)
-                * (onchain_conf_pct ** adj_onchain)
-                * 100
+                ((tech_signal.confidence / 100.0) ** adj_tech)
+                * ((sentiment_signal.confidence / 100.0) ** adj_sent)
+                * (onchain_signal.confidence ** adj_onchain)
+                * 100.0
             )
         else:
             adj_tech = tech_weight
@@ -1347,8 +1358,12 @@ class Orchestrator:
             total_weight = tech_weight + sent_weight
             fused_direction = (tech_dir * tech_weight + sent_dir * sent_weight) / total_weight
 
-            # Geometric mean for convergence (requires both signals to be strong)
-            fused_confidence = (tech_signal.confidence ** tech_weight) * (sentiment_signal.confidence ** sent_weight) * 100
+            # Geometric mean for convergence — normalize to 0-1 scale before exponentiation
+            fused_confidence = (
+                ((tech_signal.confidence / 100.0) ** tech_weight)
+                * ((sentiment_signal.confidence / 100.0) ** sent_weight)
+                * 100.0
+            )
 
         # Agreement bonus: if both agree, boost confidence
         if (tech_dir > 0 and sent_dir > 0) or (tech_dir < 0 and sent_dir < 0):

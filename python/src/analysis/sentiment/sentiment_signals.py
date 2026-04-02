@@ -53,7 +53,7 @@ _SCORE_TO_DIRECTION = [
 _HYSTERESIS_MARGIN = 0.05
 
 # Minimum number of agreeing sources to consider a signal "consensus-backed"
-_MIN_CONSENSUS_SOURCES = 3
+_MIN_CONSENSUS_SOURCES = 2
 
 # Contrarian override thresholds (from Fear & Greed)
 _CONTRARIAN_F_G_FEAR_THRESHOLD = 15

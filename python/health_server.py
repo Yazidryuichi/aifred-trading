@@ -44,45 +44,112 @@ async def handle_root(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """Lightweight health check — no heavy imports, just prove the server is alive."""
+    """Lightweight health check — verifies system is actually functional.
+
+    Returns healthy=false (HTTP 503) if:
+      - The heartbeat file is missing or older than 5 minutes (trading loop dead)
+      - The trading process (src.main) is no longer running
+    """
     checks = {}
+    healthy = True
+    reasons: list = []
+
+    _HEARTBEAT_MAX_AGE = 300  # 5 minutes
+    _STARTUP_GRACE_PERIOD = 300  # 5 minutes grace for initial startup
 
     # 1. Server is responding (obviously true if we're here)
     checks["server"] = "ok"
 
-    # 2. Check log file freshness (paper_trading.py writing to it)
+    # 2. Heartbeat file check — written by orchestrator after each scan cycle
+    heartbeat_path = Path("/app/data/.heartbeat")
+    try:
+        if heartbeat_path.exists():
+            with open(heartbeat_path, "r") as f:
+                last_ts = float(f.read().strip())
+            age_secs = time.time() - last_ts
+            if age_secs < _HEARTBEAT_MAX_AGE:
+                checks["heartbeat"] = f"ok (last cycle {int(age_secs)}s ago)"
+            else:
+                checks["heartbeat"] = f"stale ({int(age_secs)}s ago, limit {_HEARTBEAT_MAX_AGE}s)"
+                healthy = False
+                reasons.append(f"heartbeat stale ({int(age_secs)}s)")
+        else:
+            # Grace period: if we just started, the first scan hasn't completed yet
+            uptime_secs = time.monotonic() - _START_TIME
+            if uptime_secs < _STARTUP_GRACE_PERIOD:
+                checks["heartbeat"] = f"waiting (startup grace, {int(uptime_secs)}s elapsed)"
+            else:
+                checks["heartbeat"] = "missing (no heartbeat file after grace period)"
+                healthy = False
+                reasons.append("heartbeat file missing")
+    except Exception as e:
+        checks["heartbeat"] = f"error: {e}"
+        healthy = False
+        reasons.append(f"heartbeat read error: {e}")
+
+    # 3. Trading process alive check (look for src.main in /proc or via os)
+    trading_alive = False
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["pgrep", "-f", "src.main"],
+            capture_output=True, timeout=3,
+        )
+        trading_alive = result.returncode == 0
+    except FileNotFoundError:
+        # pgrep not available (e.g. Alpine without procps) -- fall back to /proc scan
+        try:
+            for pid_dir in Path("/proc").iterdir():
+                if not pid_dir.name.isdigit():
+                    continue
+                try:
+                    cmdline = (pid_dir / "cmdline").read_text()
+                    if "src.main" in cmdline:
+                        trading_alive = True
+                        break
+                except (PermissionError, FileNotFoundError, OSError):
+                    continue
+        except Exception:
+            # /proc not available (macOS, etc.) -- skip this check
+            trading_alive = True  # assume ok if we can't check
+            checks["trading_process"] = "skipped (no /proc or pgrep)"
+
+    if trading_alive:
+        checks["trading_process"] = "ok"
+    elif "trading_process" not in checks:
+        # Only fail if we're past the startup grace period
+        uptime_secs = time.monotonic() - _START_TIME
+        if uptime_secs < _STARTUP_GRACE_PERIOD:
+            checks["trading_process"] = f"waiting (startup grace, {int(uptime_secs)}s elapsed)"
+        else:
+            checks["trading_process"] = "not found"
+            healthy = False
+            reasons.append("trading process not running")
+
+    # 4. Log file freshness (secondary signal, non-blocking)
     try:
         if _LOG_FILE.exists():
             age_secs = time.time() - _LOG_FILE.stat().st_mtime
             if age_secs < 300:
-                checks["trading_loop"] = f"ok (last write {int(age_secs)}s ago)"
+                checks["log_file"] = f"ok (last write {int(age_secs)}s ago)"
             else:
-                checks["trading_loop"] = f"stale ({int(age_secs)}s ago)"
+                checks["log_file"] = f"stale ({int(age_secs)}s ago)"
         else:
-            checks["trading_loop"] = "starting"
+            checks["log_file"] = "not yet created"
     except Exception as e:
-        checks["trading_loop"] = f"error: {e}"
+        checks["log_file"] = f"error: {e}"
 
-    # 3. Quick network check — can we reach Hyperliquid?
-    try:
-        async with ClientSession(timeout=ClientTimeout(total=5)) as session:
-            async with session.post(
-                "https://api.hyperliquid.xyz/info",
-                json={"type": "allMids"},
-            ) as resp:
-                if resp.status == 200:
-                    checks["hyperliquid"] = "ok"
-                else:
-                    checks["hyperliquid"] = f"status {resp.status}"
-    except Exception:
-        checks["hyperliquid"] = "unreachable"
-
-    return web.json_response({
-        "healthy": True,  # Always return healthy if server responds
+    status_code = 200 if healthy else 503
+    response = {
+        "healthy": healthy,
         "uptime": _uptime_str(),
         "checks": checks,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    }, status=200)
+    }
+    if reasons:
+        response["reasons"] = reasons
+
+    return web.json_response(response, status=status_code)
 
 
 async def handle_status(request: web.Request) -> web.Response:

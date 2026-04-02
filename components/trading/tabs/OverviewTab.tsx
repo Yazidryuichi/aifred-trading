@@ -250,7 +250,7 @@ export function OverviewTab({
   const summary = {
     totalPnl: 0, winRate: 0, totalTrades: 0, openPositions: 0,
     avgConfidence: 0, signalCount: 0, activeStrategies: 0,
-    sharpeRatio: 0, maxDrawdown: 0, profitFactor: 0,
+    sharpeRatio: 0, sortinoRatio: null as number | null, maxDrawdown: 0, profitFactor: 0,
     avgWin: 0, avgLoss: 0, totalFees: 0, currentEquity: 0,
     ...(data.summary ?? {}),
   };
@@ -410,7 +410,7 @@ export function OverviewTab({
         <HeroStat
           label="Sharpe Ratio"
           value={summary.sharpeRatio.toFixed(2)}
-          sub={`Sortino: ${(summary.sharpeRatio * 1.3).toFixed(2)}`}
+          sub={`Sortino: ${summary.sortinoRatio !== null ? summary.sortinoRatio.toFixed(2) : "N/A"}`}
           positive={summary.sharpeRatio > 1}
           icon={<BarChart3 className="w-4 h-4" />}
           delay={0.1}

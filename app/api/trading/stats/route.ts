@@ -23,7 +23,8 @@ interface TradingData {
     totalPnl?: number;
     winRate?: number;
     totalTrades?: number;
-    sharpeRatio?: number;
+    sharpeRatio?: number | null;
+    sortinoRatio?: number | null;
     maxDrawdown?: number;
     profitFactor?: number;
     avgWin?: number;
@@ -42,7 +43,8 @@ function computeStats(trades: Trade[]) {
       totalPnl: 0,
       profitFactor: 0,
       plRatio: 0,
-      sharpeRatio: 0,
+      sharpeRatio: null,
+      sortinoRatio: null,
       maxDrawdown: 0,
       avgWin: 0,
       avgLoss: 0,
@@ -68,14 +70,59 @@ function computeStats(trades: Trade[]) {
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
   const plRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? Infinity : 0;
 
-  // Sharpe ratio (daily returns approximation)
-  const pnls = trades.map((t) => t.pnl);
-  const meanPnl = totalPnl / trades.length;
-  const variance =
-    pnls.reduce((sum, p) => sum + (p - meanPnl) ** 2, 0) / trades.length;
-  const stdDev = Math.sqrt(variance);
-  const sharpeRatio =
-    stdDev > 0 ? (meanPnl / stdDev) * Math.sqrt(252) : 0;
+  // Aggregate trades to daily returns for Sharpe/Sortino
+  const RISK_FREE_RATE = 0.05; // annual
+  const dailyRf = RISK_FREE_RATE / 252;
+  const MIN_OBSERVATIONS = 30;
+
+  // Build daily PnL map from trade exit times
+  const dailyPnlMap = new Map<string, number>();
+  const sortedTrades = [...trades].sort(
+    (a, b) => new Date(a.exit_time || a.entry_time).getTime() - new Date(b.exit_time || b.entry_time).getTime()
+  );
+  for (const t of sortedTrades) {
+    const date = (t.exit_time || t.entry_time || "").slice(0, 10);
+    if (date) {
+      dailyPnlMap.set(date, (dailyPnlMap.get(date) ?? 0) + t.pnl);
+    }
+  }
+
+  // Convert daily PnL to daily returns using a running equity
+  const dailyDates = Array.from(dailyPnlMap.keys()).sort();
+  const dailyReturns: number[] = [];
+  let runningEquity = 100_000; // starting equity assumption
+  for (const date of dailyDates) {
+    const pnl = dailyPnlMap.get(date) ?? 0;
+    if (runningEquity > 0) {
+      dailyReturns.push(pnl / runningEquity);
+    }
+    runningEquity += pnl;
+  }
+
+  // Sharpe ratio (annualized, daily returns with risk-free rate)
+  let sharpeRatio: number | null = null;
+  if (dailyReturns.length >= MIN_OBSERVATIONS) {
+    const excess = dailyReturns.map((r) => r - dailyRf);
+    const meanExcess = excess.reduce((s, r) => s + r, 0) / excess.length;
+    const variance = excess.reduce((s, r) => s + (r - meanExcess) ** 2, 0) / (excess.length - 1);
+    const stdExcess = Math.sqrt(variance);
+    sharpeRatio = stdExcess > 0 ? (meanExcess / stdExcess) * Math.sqrt(252) : 0;
+  }
+
+  // Sortino ratio (annualized, downside deviation only)
+  let sortinoRatio: number | null = null;
+  if (dailyReturns.length >= MIN_OBSERVATIONS) {
+    const excess = dailyReturns.map((r) => r - dailyRf);
+    const meanExcess = excess.reduce((s, r) => s + r, 0) / excess.length;
+    const downside = excess.filter((r) => r < 0);
+    if (downside.length > 0) {
+      const downsideVar = downside.reduce((s, r) => s + r ** 2, 0) / downside.length;
+      const downsideStd = Math.sqrt(downsideVar);
+      sortinoRatio = downsideStd > 0 ? (meanExcess / downsideStd) * Math.sqrt(252) : 0;
+    } else {
+      sortinoRatio = meanExcess > 0 ? Infinity : 0;
+    }
+  }
 
   // Max drawdown (from cumulative PnL)
   let peak = 0;
@@ -148,7 +195,8 @@ function computeStats(trades: Trade[]) {
         : Math.round(profitFactor * 100) / 100,
     plRatio:
       plRatio === Infinity ? 999 : Math.round(plRatio * 100) / 100,
-    sharpeRatio: Math.round(sharpeRatio * 100) / 100,
+    sharpeRatio: sharpeRatio !== null ? Math.round(sharpeRatio * 100) / 100 : null,
+    sortinoRatio: sortinoRatio !== null && isFinite(sortinoRatio) ? Math.round(sortinoRatio * 100) / 100 : null,
     maxDrawdown: Math.round(maxDrawdown * 100) / 100,
     avgWin: Math.round(avgWin * 100) / 100,
     avgLoss: Math.round(avgLoss * 100) / 100,

@@ -3,11 +3,19 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 const HL_ADDRESS =
+  process.env.HYPERLIQUID_WALLET_ADDRESS ||
   process.env.NEXT_PUBLIC_HYPERLIQUID_ADDRESS ||
   process.env.HYPERLIQUID_ADDRESS ||
-  "0xbec07623d9c8209E7F80dC7350b3aA0ECBdCb510";
+  "";
 
 export async function GET() {
+  if (!HL_ADDRESS) {
+    return NextResponse.json(
+      { connected: false, error: "HYPERLIQUID_WALLET_ADDRESS not configured" },
+      { status: 503 },
+    );
+  }
+
   try {
     const [perpsRes, spotRes] = await Promise.all([
       fetch("https://api.hyperliquid.xyz/info", {

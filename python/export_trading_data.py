@@ -54,20 +54,47 @@ def export():
         if dd > max_dd:
             max_dd = dd
 
-    # Sharpe ratio
-    returns = []
-    for i in range(1, len(equity_curve)):
-        prev = equity_curve[i - 1]["value"]
+    # Aggregate equity curve to daily returns
+    daily_values = {}  # date -> last equity value that day
+    for p in equity_curve:
+        d = p.get("date", "")
+        if d:
+            daily_values[d] = p["value"]
+    daily_dates = sorted(daily_values.keys())
+    daily_returns = []
+    for i in range(1, len(daily_dates)):
+        prev = daily_values[daily_dates[i - 1]]
+        curr = daily_values[daily_dates[i]]
         if prev > 0:
-            returns.append((equity_curve[i]["value"] - prev) / prev)
+            daily_returns.append((curr - prev) / prev)
 
-    avg_ret = sum(returns) / len(returns) if returns else 0
-    std_ret = (
-        math.sqrt(sum((r - avg_ret) ** 2 for r in returns) / (len(returns) - 1))
-        if len(returns) > 1
-        else 1
-    )
-    sharpe = (avg_ret / std_ret) * math.sqrt(252) if std_ret > 0 else 0
+    RISK_FREE_RATE = 0.05  # annual
+    daily_rf = RISK_FREE_RATE / 252
+    MIN_OBSERVATIONS = 30
+
+    # Sharpe ratio (annualized, using daily returns with risk-free rate)
+    if len(daily_returns) >= MIN_OBSERVATIONS:
+        excess = [r - daily_rf for r in daily_returns]
+        avg_excess = sum(excess) / len(excess)
+        std_excess = math.sqrt(
+            sum((r - avg_excess) ** 2 for r in excess) / (len(excess) - 1)
+        )
+        sharpe = (avg_excess / std_excess) * math.sqrt(252) if std_excess > 0 else 0.0
+    else:
+        sharpe = None  # insufficient data
+
+    # Sortino ratio (annualized, using daily returns with downside deviation)
+    if len(daily_returns) >= MIN_OBSERVATIONS:
+        excess = [r - daily_rf for r in daily_returns]
+        avg_excess = sum(excess) / len(excess)
+        downside = [r for r in excess if r < 0]
+        if downside:
+            downside_std = math.sqrt(sum(r ** 2 for r in downside) / len(downside))
+            sortino = (avg_excess / downside_std) * math.sqrt(252) if downside_std > 0 else 0.0
+        else:
+            sortino = float("inf") if avg_excess > 0 else 0.0
+    else:
+        sortino = None  # insufficient data
 
     # By asset
     by_asset = {}
@@ -113,7 +140,8 @@ def export():
             "winRate": round(len(wins) / len(closed) * 100, 2) if closed else 0,
             "totalTrades": len(closed),
             "openPositions": len(open_pos),
-            "sharpeRatio": round(sharpe, 2),
+            "sharpeRatio": round(sharpe, 2) if sharpe is not None else None,
+            "sortinoRatio": round(sortino, 2) if sortino is not None and sortino != float("inf") else None,
             "maxDrawdown": round(max_dd * 100, 2),
             "profitFactor": round(profit_factor, 2),
             "avgWin": round(avg_win, 2),
@@ -162,7 +190,8 @@ def export():
     print(f"  Win Rate: {data['summary']['winRate']}%")
     print(f"  Total P&L: ${data['summary']['totalPnl']:,.2f}")
     print(f"  Trades: {data['summary']['totalTrades']}")
-    print(f"  Sharpe: {data['summary']['sharpeRatio']}")
+    print(f"  Sharpe: {data['summary']['sharpeRatio'] or 'N/A'}")
+    print(f"  Sortino: {data['summary']['sortinoRatio'] or 'N/A'}")
     print(f"  Max DD: {data['summary']['maxDrawdown']}%")
 
     conn.close()

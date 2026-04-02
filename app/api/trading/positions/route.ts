@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 const HYPERLIQUID_ADDRESS =
+  process.env.HYPERLIQUID_WALLET_ADDRESS ||
   process.env.HYPERLIQUID_ADDRESS ||
-  "0xbec07623d9c8209E7F80dC7350b3aA0ECBdCb510";
+  "";
 
 const MAX_BODY_BYTES = 2048;
 
@@ -12,6 +13,13 @@ const MAX_BODY_BYTES = 2048;
 // GET — fetch current positions from Hyperliquid
 // ---------------------------------------------------------------------------
 export async function GET() {
+  if (!HYPERLIQUID_ADDRESS) {
+    return NextResponse.json(
+      { success: false, error: "HYPERLIQUID_WALLET_ADDRESS not configured" },
+      { status: 503 },
+    );
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10_000);

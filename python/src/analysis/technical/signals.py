@@ -263,15 +263,43 @@ class TechnicalAnalysisAgent:
         latest_seq = X[-lookback:]  # (lookback, features)
 
         # LSTM prediction
-        lstm_signal = self._lstm.predict(latest_seq, asset=asset, timeframe=timeframe)
+        try:
+            lstm_signal = self._lstm.predict(latest_seq, asset=asset, timeframe=timeframe)
+        except Exception as e:
+            logger.warning("LSTM prediction failed for %s: %s", asset, e)
+            lstm_signal = None
 
         # Transformer prediction
-        tf_signal = self._transformer.predict(latest_seq, asset=asset, timeframe=timeframe)
+        try:
+            tf_signal = self._transformer.predict(latest_seq, asset=asset, timeframe=timeframe)
+        except Exception as e:
+            logger.warning("Transformer prediction failed for %s: %s", asset, e)
+            tf_signal = None
 
         # CNN pattern detection (needs raw OHLCV)
-        ohlcv = df_feat[["open", "high", "low", "close", "volume"]].values[-lookback:]
-        ohlcv_input = self._cnn.prepare_input(ohlcv[np.newaxis, :])
-        cnn_signal = self._cnn.predict(ohlcv_input, asset=asset, timeframe=timeframe)
+        try:
+            ohlcv = df_feat[["open", "high", "low", "close", "volume"]].values[-lookback:]
+            ohlcv_input = self._cnn.prepare_input(ohlcv[np.newaxis, :])
+            cnn_signal = self._cnn.predict(ohlcv_input, asset=asset, timeframe=timeframe)
+        except Exception as e:
+            logger.warning("CNN prediction failed for %s: %s", asset, e)
+            cnn_signal = None
+
+        # If all models failed, return a HOLD signal
+        if lstm_signal is None and tf_signal is None and cnn_signal is None:
+            logger.warning("All ML models failed for %s — returning HOLD", asset)
+            return Signal(
+                asset=asset,
+                direction=Direction.HOLD,
+                confidence=0.0,
+                source="technical",
+                timeframe=timeframe,
+                metadata={
+                    "reason": "all_models_failed",
+                    "indicators": indicator_feats,
+                    "rule_signal": rule_val,
+                },
+            )
 
         # Ensemble prediction
         ensemble_signal = self._ensemble.predict(
@@ -384,6 +412,10 @@ class TechnicalAnalysisAgent:
         """
         logger.info(f"Training technical models for {asset} on {len(data)} bars")
 
+        if not _ML_AVAILABLE:
+            logger.warning("ML models unavailable — cannot train")
+            return {"status": "skipped", "reason": "ml_models_unavailable"}
+
         # Compute features to determine input size
         df = compute_indicators(data)
         df = compute_rule_signals(df)
@@ -407,6 +439,14 @@ class TechnicalAnalysisAgent:
         Returns:
             Dict with model status, weights, and recent accuracy.
         """
+        if not _ML_AVAILABLE:
+            return {
+                "initialized": self._is_initialized,
+                "last_train_time": self._last_train_time.isoformat() if self._last_train_time else None,
+                "mode": "indicator_only",
+                "needs_retrain": True,
+            }
+
         result = {
             "initialized": self._is_initialized,
             "last_train_time": self._last_train_time.isoformat() if self._last_train_time else None,
@@ -442,6 +482,9 @@ class TechnicalAnalysisAgent:
 
     def save_models(self, prefix: str = "latest") -> None:
         """Save all model checkpoints."""
+        if not _ML_AVAILABLE:
+            logger.warning("ML models unavailable — nothing to save")
+            return
         if not self._is_initialized:
             logger.warning("Models not initialized, nothing to save")
             return
@@ -458,6 +501,9 @@ class TechnicalAnalysisAgent:
 
         Requires models to be initialized first (call analyze or train once).
         """
+        if not _ML_AVAILABLE:
+            logger.warning("ML models unavailable — nothing to load")
+            return
         if not self._is_initialized:
             logger.warning("Models not initialized. Call analyze() or train() first.")
             return

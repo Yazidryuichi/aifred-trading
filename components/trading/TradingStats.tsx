@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { StatCard } from "@/components/trading/StatCard";
 import { TradeHistory } from "@/components/trading/TradeHistory";
 
@@ -123,6 +124,27 @@ export function TradingStats() {
 
   return (
     <div className="space-y-6">
+      {/* ─── Demo Data Warning Banner ──────────────────────── */}
+      <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
+        <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="text-[11px] text-amber-400 font-bold tracking-wider uppercase"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}
+            >
+              DEMO DATA
+            </span>
+            <span className="text-[10px] text-amber-400/60 bg-amber-500/10 border border-amber-500/15 px-2 py-0.5 rounded-md tracking-wider uppercase font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+              Simulated Backtest
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Based on simulated backtest results. Not indicative of future performance. Live trading validation in progress.
+          </p>
+        </div>
+      </div>
+
       {/* Row 1: 5 stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard

@@ -141,7 +141,7 @@ function generateSeedDecisions(): DecisionsFile {
     `- No clear directional signal from 7-agent ensemble\n\n` +
     `3) Decision: HOLD — insufficient confidence for new entry.\n` +
     `- Minimum confidence threshold: 78%\n` +
-    `- Current confidence: ${(55 + Math.random() * 20).toFixed(0)}%\n\n` +
+    `- Current confidence: below threshold\n\n` +
     `=> Strategy: Preserve capital, re-evaluate next cycle.`;
 
   const aaplCoT = (entry: number, sl: number, tp: number) =>

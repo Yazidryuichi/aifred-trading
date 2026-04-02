@@ -30,7 +30,9 @@ export interface HyperliquidData {
  * Fetch Hyperliquid data via server-side proxy (bulletproof — no CORS issues).
  * Falls back to direct Hyperliquid API if proxy fails.
  */
-async function fetchHyperliquidData(): Promise<HyperliquidData> {
+async function fetchHyperliquidData(
+  address: string,
+): Promise<HyperliquidData> {
   // Primary: server-side proxy (handles CORS, env vars, address resolution)
   try {
     const res = await fetch("/api/trading/hyperliquid", {
@@ -55,7 +57,6 @@ async function fetchHyperliquidData(): Promise<HyperliquidData> {
   }
 
   // Fallback: direct Hyperliquid API (may fail on some deployments due to CORS)
-  const address = "0xbec07623d9c8209E7F80dC7350b3aA0ECBdCb510";
   const [perpsRes, spotRes] = await Promise.all([
     fetch("https://api.hyperliquid.xyz/info", {
       method: "POST",
@@ -125,18 +126,24 @@ async function fetchHyperliquidData(): Promise<HyperliquidData> {
   };
 }
 
+const DEFAULT_ADDRESS =
+  process.env.NEXT_PUBLIC_HYPERLIQUID_ADDRESS ?? "";
+
 /**
  * Shared hook for Hyperliquid exchange data.
  * Uses server-side proxy as primary source (no CORS issues).
  * Auto-refreshes every 12 seconds.
  */
-export function useHyperliquidData(_address?: string) {
+export function useHyperliquidData(address?: string) {
+  const resolvedAddress = address || DEFAULT_ADDRESS;
+
   const query = useQuery<HyperliquidData>({
-    queryKey: ["hyperliquid-data"],
-    queryFn: fetchHyperliquidData,
+    queryKey: ["hyperliquid-data", resolvedAddress],
+    queryFn: () => fetchHyperliquidData(resolvedAddress),
     refetchInterval: 12_000,
     staleTime: 8_000,
     retry: 2,
+    enabled: !!resolvedAddress,
     placeholderData: (prev) => prev,
   });
 
@@ -145,7 +152,7 @@ export function useHyperliquidData(_address?: string) {
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
-    hasAddress: true,
-    address: "0xbec07623d9c8209E7F80dC7350b3aA0ECBdCb510",
+    hasAddress: !!resolvedAddress,
+    address: resolvedAddress,
   };
 }

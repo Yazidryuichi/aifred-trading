@@ -3,7 +3,18 @@ import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
 // In-memory rate limiting (per-process, sufficient for single-user)
+// TODO: In-memory rate limiting is ineffective on Vercel serverless — each cold
+// start gets a fresh Map. For production, migrate to Redis-based rate limiting
+// (e.g. @upstash/ratelimit) to share state across invocations.
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
+
+// Write endpoints that modify state — keep strict rate limits
+const WRITE_ENDPOINTS = new Set([
+  "/api/trading/execute",
+  "/api/trading/kill-switch",
+  "/api/trading/controls",
+  "/api/trading/autoscan",
+]);
 
 function isRateLimited(key: string, maxRequests: number, windowMs: number): boolean {
   const now = Date.now();
@@ -54,6 +65,7 @@ export async function middleware(request: NextRequest) {
     const clientId = (token.email as string) || "unknown";
 
     if (pathname === "/api/trading/execute" && request.method === "POST") {
+      // Strict: 1 trade execution per 10 seconds
       if (isRateLimited(`execute:${clientId}`, 1, 10_000)) {
         return NextResponse.json(
           { error: "Rate limit: max 1 trade per 10 seconds" },
@@ -61,16 +73,27 @@ export async function middleware(request: NextRequest) {
         );
       }
     } else if (pathname === "/api/trading/autoscan" && request.method === "POST") {
+      // Strict: 1 autoscan per 60 seconds
       if (isRateLimited(`autoscan:${clientId}`, 1, 60_000)) {
         return NextResponse.json(
           { error: "Rate limit: max 1 autoscan per 60 seconds" },
           { status: 429 }
         );
       }
-    } else {
-      if (isRateLimited(`api:${clientId}`, 10, 60_000)) {
+    } else if (WRITE_ENDPOINTS.has(pathname) && request.method === "POST") {
+      // Strict: other write endpoints — 10 requests per minute
+      if (isRateLimited(`write:${clientId}`, 10, 60_000)) {
         return NextResponse.json(
-          { error: "Rate limit: max 10 requests per minute" },
+          { error: "Rate limit: max 10 write requests per minute" },
+          { status: 429 }
+        );
+      }
+    } else {
+      // Read-only data fetching (dashboard polling, hyperliquid, activity, etc.)
+      // Dashboard generates ~23 req/min from normal polling, so 60/min is safe
+      if (isRateLimited(`read:${clientId}`, 60, 60_000)) {
+        return NextResponse.json(
+          { error: "Rate limit: max 60 read requests per minute" },
           { status: 429 }
         );
       }

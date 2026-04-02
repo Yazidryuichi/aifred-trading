@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Loader2,
   ArrowLeft,
+  AlertTriangle,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -46,18 +47,18 @@ function generateMockDecisions(count: number): Decision[] {
         action: actions[(i + j) % actions.length],
         succeeded: status !== "failure" && (status !== "partial" || j !== numAssets - 1),
       })),
-      durationMs: 5000 + Math.floor(Math.random() * 25000),
+      durationMs: 5000 + (i % 5) * 5000,
       agents:
         i % 2 === 0
           ? {
-              technical: `RSI ${30 + Math.floor(Math.random() * 40)}, MACD ${
+              technical: `RSI N/A, MACD ${
                 i % 3 === 0 ? "bullish crossover" : "neutral"
               }`,
-              sentiment: `FinBERT: ${i % 2 === 0 ? "bullish" : "neutral"} (${(0.4 + Math.random() * 0.4).toFixed(2)})`,
-              risk: `Kelly: ${(Math.random() * 3).toFixed(1)}%, R:R ${(1 + Math.random() * 2).toFixed(1)}:1`,
+              sentiment: `FinBERT: ${i % 2 === 0 ? "bullish" : "neutral"} (N/A — mock data)`,
+              risk: `Kelly: N/A, R:R N/A (mock data)`,
               regime: `${
                 ["Consolidation", "Bull Run", "Bear Market", "High Volatility"][i % 4]
-              } (${60 + Math.floor(Math.random() * 30)}% confidence)`,
+              } (N/A — mock data)`,
             }
           : undefined,
     };
@@ -272,6 +273,29 @@ export default function DecisionsPage() {
         </div>
       )}
 
+      {/* ── Demo Data Warning Banner ─────────────────── */}
+      <div className="max-w-6xl mx-auto px-4 pt-4">
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
+          <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[11px] text-amber-400 font-bold tracking-wider uppercase"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}
+              >
+                SIMULATED DECISIONS
+              </span>
+              <span className="text-[10px] text-amber-400/60 bg-amber-500/10 border border-amber-500/15 px-2 py-0.5 rounded-md tracking-wider uppercase font-medium" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                Demo Data
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Showing simulated decision history. Live decisions will appear when the AI engine generates actionable signals.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* ── Decision List ──────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-4 py-4">
         {loading ? (
@@ -294,8 +318,18 @@ export default function DecisionsPage() {
         ) : (
           <div className="space-y-3">
             {pageDecisions.map((d) => (
-              <motion.div key={d.id} initial={false} animate={{ opacity: 1 }}>
-                <DecisionCard decision={d} />
+              <motion.div key={d.id} initial={false} animate={{ opacity: 1 }} className="relative">
+                <div className="absolute top-2 right-2 z-10">
+                  <span
+                    className="text-[9px] text-amber-400/70 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded font-bold tracking-wider uppercase"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}
+                  >
+                    SIMULATED
+                  </span>
+                </div>
+                <div className="opacity-70">
+                  <DecisionCard decision={d} />
+                </div>
               </motion.div>
             ))}
           </div>
