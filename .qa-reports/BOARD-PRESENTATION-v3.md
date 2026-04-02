@@ -31,7 +31,7 @@
 
 We ran a 12-agent independent audit of our entire codebase. Ten specialist reviewers -- ML engineer, backend engineer, frontend engineer, risk auditor, signal analyst, DevOps engineer, security auditor, data integrity analyst, QA lead, and senior full-stack engineer -- examined every module, every formula, and every data source.
 
-They found 67 distinct issues. Eight are showstoppers. Ten are critical. The rest range from high to cosmetic.
+They found 67 distinct issues. Eight were showstoppers. Ten were critical. The rest range from high to cosmetic. Within 24 hours, we resolved 6 of the 8 showstoppers and 5 of the 10 critical issues -- 11 of 18 top-priority fixes deployed and verified.
 
 They also found something worth investing in.
 
@@ -46,17 +46,18 @@ They also found something worth investing in.
 
 ### What Does Not Work
 
-- **All displayed performance metrics are fake.** The $54.6K P&L, 78.1% win rate, and Sharpe 7.31 come from a script called `seed_demo_data.py` that generates 250 random trades with a biased coin flip. The Sortino ratio displayed in the UI is literally `Sharpe * 1.3` -- not calculated. The arena competition data is procedurally generated with hardcoded target returns. We are not hiding this. We are telling you before you find it.
-- **The confidence fusion formula has a mathematical bug.** It applies a geometric mean to percentage-scale values (0-100) instead of normalized values (0-1), producing results that always clamp to 100%. This means the system cannot distinguish between a weak signal pair and a strong one. The fix is 5 lines of code and 30 minutes of work.
-- **Five configuration key mismatches** silently bypass safety limits. The live config sets a maximum of 8 trades per day, but the code reads a different key name and defaults to 20. The daily loss limit and scan interval have similar mismatches.
+- **All displayed performance metrics are from demo data.** The $54.6K P&L, 78.1% win rate, and Sharpe 7.31 come from a script called `seed_demo_data.py` that generates 250 random trades with a biased coin flip. The arena competition data is procedurally generated. We are not hiding this -- the dashboard now displays prominent "DEMO DATA" disclaimers on every page showing simulated results. We are telling you before you find it.
+- ~~**The confidence fusion formula had a mathematical bug.**~~ **FIXED (April 2).** The geometric mean now normalizes to 0-1 scale before exponentiation. Verified: tech=85% + sent=70% produces 78.6%, not 100%.
+- ~~**Five configuration key mismatches.**~~ **FIXED (April 2).** All 3 mismatched keys (`max_daily_trades`, `daily_loss_limit_pct`, `scan_interval`) now read correctly from live.yaml.
+- ~~**Sortino ratio fabricated as Sharpe * 1.3.**~~ **FIXED (April 2).** Replaced with actual downside deviation calculation matching the Python risk_metrics.py reference implementation.
 - **Zero test coverage on the Python backend.** The code that handles real money has no automated tests.
 - **No payment infrastructure.** No Stripe, no billing, no way to charge customers.
 
 ### Our Plan
 
-Every one of these problems is known, estimated, and scheduled. The confidence formula fix takes 30 minutes. The config mismatches take 2 hours. Demo mode disclaimers take 4 hours. The hard problems -- database migration, test coverage, payment integration -- are Sprint 5 deliverables with clear timelines.
+Of the original 8 P0 showstoppers identified by the 12-agent audit, **3 have already been resolved** (fusion formula, config mismatches, Sortino fabrication) within 24 hours of discovery. Demo data disclaimers are deployed. The remaining 5 P0 items are known, estimated, and scheduled. The hard problems -- database migration, test coverage, payment integration -- are Sprint 5 deliverables with clear timelines.
 
-The difference between this team and most pre-seed startups is not that we have fewer bugs. It is that we found them ourselves, cataloged them with severity ratings, and are presenting them to you before you had to ask.
+The difference between this team and most pre-seed startups is not that we have fewer bugs. It is that we found them ourselves, cataloged them with severity ratings, fixed the critical ones within hours, and are presenting the rest to you before you had to ask.
 
 ---
 
@@ -146,14 +147,16 @@ These must be fixed before any external demo.
 
 | # | Issue | Impact | Fix Estimate |
 |---|-------|--------|-------------|
-| 1 | All headline metrics ($54.6K P&L, 78.1% win rate, Sharpe 7.31) are from seeded random data | Investor sees fabricated performance | 2-4 hours (add disclaimers, force demo mode) |
-| 2 | Sortino ratio displayed as `Sharpe * 1.3` -- fabricated, no calculation | Fabricated financial metric | 30 minutes (display "N/A" or compute properly) |
-| 3 | Fake AI signals (random RSI, FinBERT, Kelly) injected into real trade activity entries | Users cannot distinguish real AI analysis from random numbers | 2 hours (remove enrichment functions, show "N/A") |
-| 4 | Hardcoded wallet address in client-side JavaScript (4 locations) -- exposes real Hyperliquid account | Operator positions visible, wallet connect feature broken | 1-2 hours |
-| 5 | Confidence fusion geometric mean on 0-100 scale always clamps to 100% | Signal quality discrimination destroyed | 30 minutes (normalize to 0-1 before computation) |
+| 1 | ~~All headline metrics from seeded random data with no disclaimers~~ | ~~Investor sees fabricated performance~~ | **RESOLVED** -- "DEMO DATA" disclaimers deployed on all affected pages (April 2) |
+| 2 | ~~Sortino ratio displayed as `Sharpe * 1.3`~~ | ~~Fabricated financial metric~~ | **RESOLVED** -- real downside deviation calculation deployed (April 2) |
+| 3 | ~~Fake AI signals (random RSI, FinBERT, Kelly) injected into activity~~ | ~~Fake data presented as real~~ | **RESOLVED** -- Math.random() removed, shows "N/A" or "unavailable" (April 2) |
+| 4 | ~~Hardcoded wallet address in client-side JavaScript~~ | ~~Operator exposed~~ | **RESOLVED** -- moved to env vars, useHyperliquidData now uses address parameter (April 2) |
+| 5 | ~~Confidence fusion formula always clamps to 100%~~ | ~~Signal discrimination destroyed~~ | **RESOLVED** -- normalized to 0-1 before geometric mean (April 2) |
 | 6 | Broker credentials sent in request body from browser | API keys visible in DevTools | 4-6 hours (store server-side, reference by ID) |
-| 7 | Decisions page shows 60 fake AI decisions with zero disclaimer | Fabricated decision history | 1 hour |
+| 7 | ~~Decisions page shows 60 fake AI decisions with zero disclaimer~~ | ~~Fabricated decision history~~ | **RESOLVED** -- "SIMULATED" badges and disclaimers deployed (April 2) |
 | 8 | Arena competition data is entirely procedural with hardcoded targets | Fabricated competitive results | 1 hour |
+
+**Status: 6 of 8 original P0 items resolved.** 2 remaining (broker credentials in request body, arena fake data).
 
 ### 3.2 Critical Issues (P1 -- 10 issues)
 
@@ -162,15 +165,18 @@ These must be fixed before beta launch.
 | # | Issue | Fix Estimate |
 |---|-------|-------------|
 | 1 | Railway ephemeral filesystem -- all data lost on every restart/deploy | 2-4 hours (add Railway volume or migrate to Postgres) |
-| 2 | 3 config key mismatches in orchestrator -- live safety limits silently ignored | 1-2 hours |
-| 3 | `execute-trade.ts` reads broker secrets without decryption -- live trades silently fail | 15 minutes |
-| 4 | Health check always returns HTTP 200 -- Railway never auto-restarts stuck containers | 30 minutes |
+| 1 | Railway ephemeral filesystem -- all data lost on every restart/deploy | 2-4 hours (add Railway volume or migrate to Postgres) |
+| 2 | ~~3 config key mismatches in orchestrator~~ | **RESOLVED** (April 2) |
+| 3 | ~~`execute-trade.ts` reads broker secrets without decryption~~ | **RESOLVED** -- decryptCredentials() added (April 2) |
+| 4 | ~~Health check always returns HTTP 200~~ | **RESOLVED** -- checks heartbeat file + process alive, returns 503 on failure (April 2) |
 | 5 | Zero Python test coverage for trading engine, risk management, execution | 2-3 weeks (ongoing) |
 | 6 | GitHub Actions autotrade workflow calls API without JWT -- always gets 401 | 1-2 hours |
-| 7 | ML unavailability zeros out fusion formula -- blocks all trades even with valid sentiment | 2-3 hours |
+| 7 | ~~ML unavailability zeros out fusion formula~~ | **RESOLVED** -- indicator-only fallback + null guards (April 2) |
 | 8 | Encryption key derived from NEXTAUTH_SECRET via raw SHA-256 -- no proper KDF | 2 hours |
 | 9 | Vercel OIDC token may be in git history | 1 hour (audit + rotate) |
-| 10 | `signals.py` crashes in indicator-only mode when accessing model attributes on None | 5 minutes |
+| 10 | ~~`signals.py` crashes in indicator-only mode~~ | **RESOLVED** -- _ML_AVAILABLE guards on all methods (April 2) |
+
+**Status: 5 of 10 original P1 items resolved.** 5 remaining.
 
 ### 3.3 What This Means
 
@@ -349,6 +355,21 @@ v1 of this presentation projected $16.9M by 2028. We revised down to $10.6M. Thi
 
 Reduced from $2.5M in v1, reflecting the engineering velocity demonstrated in the 3-sprint overhaul and the honest assessment of current maturity.
 
+### Proposed Deal Terms
+
+| Term | Detail |
+|------|--------|
+| **Instrument** | SAFE (Simple Agreement for Future Equity) with MFN provision |
+| **Amount** | $2.0M |
+| **Valuation cap** | $10M pre-money |
+| **Discount** | 20% to next priced round |
+| **Pro-rata rights** | Yes, for investors at $100K+ |
+| **Information rights** | Quarterly financial updates, monthly product updates |
+| **Board seat** | Observer seat for lead investor ($500K+) |
+| **Use of funds lockup** | 18-month runway commitment; no founder distributions until Series A |
+
+*Terms are indicative and subject to negotiation. Final terms to be documented in standard Y Combinator SAFE format with legal counsel review.*
+
 ### Use of Funds
 
 | Category | Amount | % | Rationale |
@@ -502,7 +523,7 @@ The 12-agent audit is itself a deliverable. Here is what it found:
 
 | Severity | Count | Examples |
 |----------|-------|---------|
-| P0 (Showstopper) | 8 | Fake metrics displayed as real, broken fusion formula, credential exposure |
+| P0 (Showstopper) | 8 (6 resolved) | ~~Fake metrics, fusion formula, Sortino, wallet exposure, fake signals, decisions page~~ resolved April 2. Remaining: broker creds in request body, arena fake data |
 | P1 (Critical) | 10 | Ephemeral storage, config mismatches, zero test coverage |
 | P2 (High) | 13 | No input validation, Sharpe formula wrong, rate limit conflicts |
 | P3 (Medium) | 16 | Deprecated async patterns, missing margin monitoring, structlog unused |
@@ -633,7 +654,7 @@ First enterprise
 
 | Milestone | Target Date | Deliverables | Success KPIs |
 |-----------|------------|-------------|-------------|
-| **M0: P0 Resolution** | May 2026 | All 8 showstoppers resolved, demo mode honest, fusion formula fixed | Zero fabricated data in UI, QA re-audit clean |
+| **M0: P0 Resolution** | April 2026 (in progress) | 6 of 8 showstoppers resolved (April 2). Remaining 2 + P1 items targeted for completion by mid-April | Zero fabricated data in UI, QA re-audit clean |
 | **M1: Hardening** | June 2026 | Mobile responsive, security fixes, Supabase migration, Stripe integration, test suite foundation | Lighthouse mobile >= 85, payment flow functional, >30% test coverage on critical paths |
 | **M2: Closed Beta** | July 2026 | 10-20 invited sophisticated traders on paper trading, real performance data accumulating | User registrations, daily active usage, feedback quality |
 | **M3: Public Beta** | September 2026 | Free tier launch, community channels (Discord, Twitter), onboarding flow | 5,000 registered users, 500 DAU, NPS > 40 |
@@ -658,7 +679,7 @@ This table documents specific claims from the v2 board presentation that the 12-
 | "Sharpe 7.31" | Generated from `seed_demo_data.py` with biased random data. Formula uses per-trade returns with sqrt(252) annualization -- mathematically incorrect. | **Fabricated. No validated Sharpe exists.** |
 | "78.1% win rate" | Tuned parameter in random data generator (`win_prob = 0.65 + win_boost`) | **Fabricated** |
 | "$54.6K P&L" | Computed from 250 randomly generated trades | **Fabricated** |
-| "Sortino ratio" | Displayed as `Sharpe * 1.3` -- no downside deviation calculation | **Fabricated** |
+| "Sortino ratio" | Was displayed as `Sharpe * 1.3` in v2. **Fixed April 2** -- now uses real downside deviation calculation | **Was fabricated, now FIXED** |
 | "Professional sidebar with 6 top-level sections" | Correct | **Verified** |
 | "Live Hyperliquid exchange data" | Correct -- when configured. Falls back to seeded data without disclaimer when not. | **Partially true -- needs forced demo mode** |
 | "Zero P0 blockers remain" | 8 new P0 blockers identified by 12-agent audit | **False** |
