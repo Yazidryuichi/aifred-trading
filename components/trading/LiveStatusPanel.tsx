@@ -128,7 +128,7 @@ export function LiveStatusPanel() {
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold text-zinc-300 flex items-center gap-2">
               <Radio className="w-3.5 h-3.5 text-emerald-400" />
-              Paper Trading
+              Live Trading Engine
             </h3>
             {paperStatus?.scanCount != null && (
               <span
@@ -157,7 +157,7 @@ export function LiveStatusPanel() {
               </div>
               {paperStatus.not_configured && (
                 <div className="text-[10px] text-amber-400/60 leading-tight">
-                  Python backend not connected. Trading via Next.js API routes.
+                  Railway backend URL not configured. Set RAILWAY_BACKEND_URL in Vercel env vars.
                 </div>
               )}
 
