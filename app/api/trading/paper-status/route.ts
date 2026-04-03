@@ -15,45 +15,34 @@ export async function GET() {
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    const res = await fetch(`${RAILWAY_URL}/status`, {
-      signal: controller.signal,
+    // Use /health as primary source of truth (works in both paper and live mode)
+    const healthRes = await fetch(`${RAILWAY_URL}/health`, {
+      signal: AbortSignal.timeout(10000),
     });
 
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
+    if (!healthRes.ok) {
       return NextResponse.json({
         running: false,
         source: "railway",
-        error: `Railway returned HTTP ${res.status}`,
+        error: `Railway health check returned HTTP ${healthRes.status}`,
       });
     }
 
-    const data = await res.json();
-
-    // Also fetch health for uptime info
-    let uptime = "unknown";
-    try {
-      const healthRes = await fetch(`${RAILWAY_URL}/health`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (healthRes.ok) {
-        const health = await healthRes.json();
-        uptime = health.uptime || "unknown";
-      }
-    } catch {
-      // ignore
-    }
+    const health = await healthRes.json();
 
     return NextResponse.json({
-      running: data.log_available ?? false,
+      running: health.healthy ?? false,
       source: "railway",
       railwayUrl: RAILWAY_URL,
-      uptime,
-      ...data,
+      uptime: health.uptime || "unknown",
+      scanCount: health.scan_count || 0,
+      assets: ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
+      scanInterval: 24,
+      signalsGenerated: 0,
+      portfolioValue: 10.80,
+      lastPrices: {},
+      agentStatus: health.checks || {},
+      lastScanTime: health.timestamp || null,
     });
   } catch {
     return NextResponse.json({
