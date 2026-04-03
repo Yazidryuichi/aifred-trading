@@ -1284,12 +1284,13 @@ class Orchestrator:
         if tech_signal is None and sentiment_signal is None:
             return None
 
-        # Single signal available: use it with reduced confidence
+        # Single signal available: use its confidence with a mild 15% penalty
+        # (not weight * 0.7 which destroys the score — e.g. 85% * 0.6 * 0.7 = 35%)
         if tech_signal is None:
             return Signal(
                 asset=asset,
                 direction=sentiment_signal.direction,
-                confidence=sentiment_signal.confidence * sent_weight * 0.7,  # single-signal penalty
+                confidence=sentiment_signal.confidence * 0.85,  # 15% single-source penalty
                 source="fused_sentiment_only",
                 timeframe=sentiment_signal.timeframe,
                 metadata={
@@ -1306,7 +1307,7 @@ class Orchestrator:
             return Signal(
                 asset=asset,
                 direction=tech_signal.direction,
-                confidence=tech_signal.confidence * tech_weight * 0.7,  # single-signal penalty
+                confidence=tech_signal.confidence * 0.85,  # 15% single-source penalty
                 source="fused_technical_only",
                 timeframe=tech_signal.timeframe,
                 metadata={

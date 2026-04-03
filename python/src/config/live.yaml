@@ -14,7 +14,9 @@ assets:
   forex: []
 
 orchestrator:
-  min_confidence_threshold: 85
+  # Temporarily lowered from 85 to 80 to validate execution pipeline (2026-04-03)
+  # TODO: Raise back to 85 once first trade executes successfully
+  min_confidence_threshold: 80
   max_daily_trades: 8
 
 risk:
