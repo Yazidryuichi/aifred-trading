@@ -45,6 +45,11 @@ class WebSocketManager:
         self._running = False
         self._stop_event = asyncio.Event()
 
+        # Symbol mapping for exchanges that use different quote currencies
+        # e.g. Hyperliquid uses USDC not USDT
+        self._symbol_map: Dict[str, str] = {}      # canonical -> exchange
+        self._reverse_map: Dict[str, str] = {}      # exchange -> canonical
+
         # Price cache: symbol -> {price, bid, ask, timestamp, volume}
         self._prices: Dict[str, Dict[str, Any]] = {}
 
@@ -163,6 +168,27 @@ class WebSocketManager:
     # ------------------------------------------------------------------
     # Subscription management
     # ------------------------------------------------------------------
+
+    def _map_symbol(self, symbol: str) -> str:
+        """Map a canonical symbol to the exchange's format.
+
+        For Hyperliquid: BTC/USDT -> BTC/USDC:USDC (perp)
+        """
+        if symbol in self._symbol_map:
+            return self._symbol_map[symbol]
+
+        if self._exchange_id == "hyperliquid" and "/USDT" in symbol:
+            base = symbol.split("/")[0]
+            mapped = f"{base}/USDC:USDC"
+            self._symbol_map[symbol] = mapped
+            self._reverse_map[mapped] = symbol
+            return mapped
+
+        return symbol
+
+    def _unmap_symbol(self, symbol: str) -> str:
+        """Map an exchange symbol back to canonical format."""
+        return self._reverse_map.get(symbol, symbol)
 
     async def subscribe_tickers(self, symbols: List[str]) -> None:
         """Subscribe to real-time ticker updates for symbols.
@@ -318,21 +344,26 @@ class WebSocketManager:
                     await asyncio.sleep(1)
                     continue
 
+                # Map symbols to exchange format (e.g. USDT -> USDC for Hyperliquid)
+                mapped_symbols = [self._map_symbol(s) for s in symbols]
+
                 # watch_tickers is the batch method; some exchanges only support
                 # watch_ticker (singular). Try batch first.
                 try:
-                    tickers = await self._exchange.watch_tickers(symbols)
+                    tickers = await self._exchange.watch_tickers(mapped_symbols)
                 except (AttributeError, NotImplementedError):
                     # Fallback: watch one at a time using the first symbol
                     # (less efficient, but compatible)
-                    ticker = await self._exchange.watch_ticker(symbols[0])
-                    tickers = {symbols[0]: ticker}
+                    ticker = await self._exchange.watch_ticker(mapped_symbols[0])
+                    tickers = {mapped_symbols[0]: ticker}
 
                 self._last_message_time = time.time()
                 self._consecutive_failures = 0
                 self._reconnect_tier = 0
 
                 for symbol, ticker in tickers.items():
+                    # Unmap back to canonical symbol (e.g. BTC/USDC:USDC -> BTC/USDT)
+                    symbol = self._unmap_symbol(symbol)
                     price_data = {
                         "price": ticker.get("last") or ticker.get("close", 0),
                         "bid": ticker.get("bid", 0),
@@ -527,9 +558,11 @@ class WebSocketManager:
             len(self._ticker_symbols),
         )
         while self._running and self._rest_fallback_active:
-            for symbol in list(self._ticker_symbols):
+            for canonical_symbol in list(self._ticker_symbols):
+                symbol = canonical_symbol  # for price cache key
                 try:
-                    ticker = await self._exchange.fetch_ticker(symbol)
+                    mapped = self._map_symbol(canonical_symbol)
+                    ticker = await self._exchange.fetch_ticker(mapped)
                     price_data = {
                         "price": ticker.get("last") or ticker.get("close", 0),
                         "bid": ticker.get("bid", 0),
