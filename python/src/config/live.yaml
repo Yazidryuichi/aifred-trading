@@ -46,6 +46,12 @@ execution:
     default_leverage: 2
     max_leverage: 2
 
+data:
+  websocket:
+    # Binance is geo-blocked from Railway's US datacenter (451 error)
+    # Use Hyperliquid for market data since we trade on it anyway
+    exchange: "hyperliquid"
+
 validation:
   min_balance_usd: 5
   required_exchanges: []
