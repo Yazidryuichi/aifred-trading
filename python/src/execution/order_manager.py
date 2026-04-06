@@ -100,7 +100,9 @@ class OrderManager:
         last_error = None
         for attempt in range(order.max_retries):
             try:
-                result = connector.place_order(
+                # Use sync wrapper if available (e.g. HyperliquidConnector)
+                place_fn = getattr(connector, "place_order_sync", None) or connector.place_order
+                result = place_fn(
                     symbol=order.symbol,
                     side=order.side,
                     order_type=ccxt_type,

@@ -915,3 +915,46 @@ class HyperliquidConnector:
             amount=target["size"],
             params=close_params,
         )
+
+    # ------------------------------------------------------------------
+    # Sync wrappers for compatibility with sync ExecutionAgent/OrderManager
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _run_sync(coro):
+        """Run an async coroutine synchronously."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            # Already in an async context — create a new thread to avoid deadlock
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result(timeout=30)
+        return asyncio.run(coro)
+
+    def connect_sync(self) -> None:
+        """Sync version of connect()."""
+        self._run_sync(self.connect())
+
+    def place_order_sync(
+        self, symbol: str, side: str, order_type: str,
+        amount: float, price: Optional[float] = None,
+        params: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Sync version of place_order() — used by OrderManager."""
+        return self._run_sync(
+            self.place_order(symbol, side, order_type, amount, price, params)
+        )
+
+    def get_balance_sync(self) -> Dict[str, Any]:
+        """Sync version of get_balance() — returns CCXT-compatible format for ExecutionAgent."""
+        raw = self._run_sync(self.get_balance())
+        free_usd = float(raw.get("free", 0))
+        return {
+            "total": {"USDC": raw.get("total", 0)},
+            "free": {"USDC": free_usd},
+            "used": {"USDC": raw.get("used", 0)},
+        }

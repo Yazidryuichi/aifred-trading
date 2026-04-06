@@ -14,9 +14,10 @@ assets:
   forex: []
 
 orchestrator:
-  # Temporarily lowered from 85 to 80 to validate execution pipeline (2026-04-03)
-  # TODO: Raise back to 85 once first trade executes successfully
-  min_confidence_threshold: 80
+  # Lowered to 65 for single-source operation (technical-only without sentiment/on-chain API keys)
+  # Single-source penalty is 0.85x, so technical needs ~76% raw to pass 65% fused
+  # TODO: Raise to 80 once Reddit/Etherscan API keys are added
+  min_confidence_threshold: 65
   max_daily_trades: 8
 
 risk:

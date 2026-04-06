@@ -77,23 +77,54 @@ class ExecutionAgent:
 
     def _init_connectors(self, config: Dict[str, Any]) -> None:
         """Initialize exchange connectors from config."""
-        exchanges = config.get("exchanges", {})
-        for asset_class_name, exchange_list in exchanges.items():
-            for exch in exchange_list:
-                name = exch.get("name", "")
-                connector = ExchangeConnector(
-                    name=name,
-                    api_key=exch.get("api_key", ""),
-                    secret=exch.get("secret", ""),
-                    sandbox=False,
-                    extra_params={k: v for k, v in exch.items()
-                                  if k not in ("name", "api_key", "secret")},
+        exec_config = config.get("execution", {})
+
+        # Initialize Hyperliquid if enabled
+        hl_config = exec_config.get("hyperliquid", {})
+        if hl_config.get("enabled", False):
+            import os
+            address = hl_config.get("user_address", os.environ.get("HYPERLIQUID_ADDRESS", ""))
+            private_key = hl_config.get("private_key", os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""))
+            if address and private_key and not address.startswith("${") and not private_key.startswith("${"):
+                from src.execution.hyperliquid_connector import HyperliquidConnector
+                hl = HyperliquidConnector(
+                    user_address=address,
+                    private_key=private_key,
+                    testnet=hl_config.get("testnet", False),
                 )
-                connector.connect()
-                self._connectors[name] = connector
+                try:
+                    hl.connect_sync()
+                except Exception as e:
+                    logger.warning("Hyperliquid connect failed: %s", e)
+                self._connectors["hyperliquid"] = hl
+                logger.info("Hyperliquid connector initialized (address=%s...)", address[:10])
+            else:
+                logger.warning("Hyperliquid enabled but credentials missing or unresolved")
+
+        # Initialize traditional CCXT exchanges
+        exchanges = exec_config.get("exchanges", {})
+        for name, exch_cfg in exchanges.items():
+            if not isinstance(exch_cfg, dict) or not exch_cfg.get("enabled", False):
+                continue
+            api_key = exch_cfg.get("api_key", "")
+            secret = exch_cfg.get("api_secret", exch_cfg.get("secret", ""))
+            if not api_key or api_key.startswith("${"):
+                logger.warning("Exchange %s enabled but credentials missing", name)
+                continue
+            connector = ExchangeConnector(
+                name=name,
+                api_key=api_key,
+                secret=secret,
+                sandbox=False,
+                extra_params={k: v for k, v in exch_cfg.items()
+                              if k not in ("name", "api_key", "api_secret", "secret", "enabled")},
+            )
+            connector.connect()
+            self._connectors[name] = connector
 
         if self._connectors:
             self._router = SmartRouter(self._connectors)
+            logger.info("Exchange connectors initialized: %s", list(self._connectors.keys()))
 
     def is_paper_mode(self) -> bool:
         return self._paper_mode
@@ -674,7 +705,9 @@ class ExecutionAgent:
 
         for name, connector in self._connectors.items():
             try:
-                bal = connector.get_balance()
+                # Use sync wrapper if available (e.g. HyperliquidConnector)
+                get_bal_fn = getattr(connector, "get_balance_sync", None) or connector.get_balance
+                bal = get_bal_fn()
                 free = bal.get("free", {})
                 exchange_free = 0.0
                 for currency in ("USD", "USDT", "USDC", "BUSD"):

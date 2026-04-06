@@ -4,7 +4,7 @@ import { join } from "path";
 
 export const dynamic = "force-dynamic";
 
-const PYTHON_API = process.env.PYTHON_TRADING_API || "http://localhost:8080";
+const PYTHON_API = process.env.PYTHON_TRADING_API || process.env.RAILWAY_BACKEND_URL || "http://localhost:8080";
 
 const TMP_DIR = "/tmp/aifred-data";
 const KILL_SWITCH_PATH = join(TMP_DIR, "kill-switch.json");

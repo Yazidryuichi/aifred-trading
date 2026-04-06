@@ -1270,6 +1270,24 @@ def create_exchange(mode: str, config: Dict[str, Any]) -> AbstractExchange:
         ValueError: If mode is not recognized.
     """
     if mode == "live":
+        # Check if Hyperliquid is the enabled exchange for live trading
+        hl_config = config.get("hyperliquid", {})
+        exchanges_config = config.get("exchanges", {})
+        # Use Hyperliquid if it's enabled and traditional exchanges are disabled
+        hl_enabled = hl_config.get("enabled", False)
+        traditional_enabled = any(
+            exc.get("enabled", False) for exc in exchanges_config.values()
+            if isinstance(exc, dict)
+        )
+        if hl_enabled and not traditional_enabled:
+            import os
+            from src.execution.hyperliquid_exchange import HyperliquidExchange
+
+            address = hl_config.get("user_address", os.environ.get("HYPERLIQUID_ADDRESS", ""))
+            private_key = hl_config.get("private_key", os.environ.get("HYPERLIQUID_PRIVATE_KEY", ""))
+            testnet = hl_config.get("testnet", False)
+            return HyperliquidExchange(address, private_key, testnet)
+
         from src.execution.exchange_connector import ExchangeConnector
 
         connector = ExchangeConnector(
