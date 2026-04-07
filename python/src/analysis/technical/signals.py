@@ -55,8 +55,10 @@ except ImportError as _ml_err:
 logger = logging.getLogger(__name__)
 
 # Signal gating constants
-MIN_CONFIDENCE_THRESHOLD = 75.0
-MIN_CONFLUENCES = 4
+# Lowered from 75% to 45% — ML models are untrained (no checkpoints),
+# producing weak signals. Once walk-forward training runs, raise back to 75%.
+MIN_CONFIDENCE_THRESHOLD = 45.0
+MIN_CONFLUENCES = 3  # Lowered from 4 — allow signals with fewer confluences
 
 # Default config path
 DEFAULT_CONFIG_PATH = "src/config/default.yaml"
@@ -374,7 +376,7 @@ class TechnicalAnalysisAgent:
         if in_kill_zone:
             signal.confidence *= 1.15  # +15% boost during high institutional volume
         else:
-            signal.confidence *= 0.85  # -15% reduction outside kill zones
+            signal.confidence *= 0.95  # -5% reduction outside kill zones (was 0.85)
 
         signal.metadata["in_kill_zone"] = in_kill_zone
 
