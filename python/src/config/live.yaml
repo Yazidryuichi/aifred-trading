@@ -14,10 +14,10 @@ assets:
   forex: []
 
 orchestrator:
-  # Lowered to 65 for single-source operation (technical-only without sentiment/on-chain API keys)
-  # Single-source penalty is 0.85x, so technical needs ~76% raw to pass 65% fused
-  # TODO: Raise to 80 once Reddit/Etherscan API keys are added
-  min_confidence_threshold: 65
+  # Temporarily set to 20 to validate execution pipeline with first trade
+  # Rule-based fallback produces 28-55% signals, × 0.85 single-source = 24-47%
+  # TODO: Raise to 65 once models are trained and Reddit API keys arrive
+  min_confidence_threshold: 20
   max_daily_trades: 8
 
 risk:
