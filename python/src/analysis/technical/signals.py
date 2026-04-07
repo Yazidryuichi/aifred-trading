@@ -303,6 +303,19 @@ class TechnicalAnalysisAgent:
                 },
             )
 
+        # Log model outputs for visibility (temporary — remove once models are trained)
+        logger.info(
+            "[%s] ML predictions — LSTM: %s (%.1f%%), Transformer: %s (%.1f%%), CNN: %s (%.1f%%), Rule: %.2f",
+            asset,
+            lstm_signal.direction.value if lstm_signal else "NONE",
+            lstm_signal.confidence if lstm_signal else 0,
+            tf_signal.direction.value if tf_signal else "NONE",
+            tf_signal.confidence if tf_signal else 0,
+            cnn_signal.direction.value if cnn_signal else "NONE",
+            cnn_signal.confidence if cnn_signal else 0,
+            rule_val,
+        )
+
         # Ensemble prediction
         ensemble_signal = self._ensemble.predict(
             lstm_signal=lstm_signal,
@@ -324,7 +337,15 @@ class TechnicalAnalysisAgent:
         }
 
         # ── Signal gating ──────────────────────────────────────────
+        pre_gate_dir = ensemble_signal.direction.value
+        pre_gate_conf = ensemble_signal.confidence
         ensemble_signal = self._apply_signal_gates(ensemble_signal, df)
+        logger.info(
+            "[%s] Ensemble: %s %.1f%% → gated: %s %.1f%% (confluences=%d)",
+            asset, pre_gate_dir, pre_gate_conf,
+            ensemble_signal.direction.value, ensemble_signal.confidence,
+            ensemble_signal.metadata.get("confluences", 0),
+        )
 
         return ensemble_signal
 
