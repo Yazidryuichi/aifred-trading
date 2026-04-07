@@ -22,6 +22,9 @@ transformers>=4.35.0
 pyyaml>=6.0.1
 python-dotenv>=1.0.0
 
+# Ethereum signing (required for Hyperliquid order signing)
+eth-account>=0.11.0
+
 # Async & networking
 aiohttp>=3.9.0
 websockets>=12.0
