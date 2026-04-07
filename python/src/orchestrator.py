@@ -1068,34 +1068,35 @@ class Orchestrator:
         Returns None if the agent is unavailable or analysis fails.
         """
         if self._tech_agent is None:
+            logger.info("Tech agent is None for %s — skipping", asset)
             return None
 
         if self._data_provider is None:
-            logger.debug("No data provider set, skipping technical analysis for %s", asset)
+            logger.info("No data provider set, skipping technical analysis for %s", asset)
             return None
 
         # Skip if failed and backoff hasn't elapsed
         if not self._degradation.should_retry_subsystem(DegradationManager.TECHNICAL):
-            logger.debug("Technical analysis in backoff for %s, skipping", asset)
+            logger.info("Technical analysis in backoff for %s, skipping", asset)
             return None
 
         try:
             t0 = time.monotonic()
             data = self._data_provider(asset, "1h")
             if data is None or len(data) < 100:
-                logger.debug("Insufficient data for technical analysis: %s", asset)
+                logger.info("Insufficient data for technical analysis: %s (%d bars)", asset, len(data) if data is not None else 0)
                 return None
 
             signal = self._tech_agent.analyze(asset, data, timeframe="1h")
             elapsed_ms = (time.monotonic() - t0) * 1000
             self._degradation.report_success(DegradationManager.TECHNICAL, elapsed_ms)
-            logger.debug(
-                "Technical signal for %s: %s (conf=%.1f%%)",
-                asset, signal.direction.value, signal.confidence,
+            logger.info(
+                "Technical signal for %s: %s (conf=%.1f%%) [%.0fms]",
+                asset, signal.direction.value, signal.confidence, elapsed_ms,
             )
             return signal
         except Exception as e:
-            logger.error("Technical analysis failed for %s: %s", asset, e)
+            logger.error("Technical analysis failed for %s: %s", asset, e, exc_info=True)
             self._error_counts[f"tech_{asset}"] += 1
             self._degradation.report_failure(DegradationManager.TECHNICAL, str(e))
             return None
