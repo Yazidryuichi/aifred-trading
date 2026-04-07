@@ -28,8 +28,8 @@ echo "[start.sh] Health server started (PID=$HEALTH_PID)"
 # Wait for health server to bind before starting heavy trading loop
 sleep 3
 
-# Start the trading engine with mode and dry-run flags
-python -m src.main --mode "$MODE" $DRY_RUN_FLAG &
+# Start the trading engine with mode, portfolio value, and dry-run flags
+python -m src.main --mode "$MODE" --portfolio-value 10.80 $DRY_RUN_FLAG &
 TRADING_PID=$!
 echo "[start.sh] Trading engine started (PID=$TRADING_PID, mode=$MODE)"
 
