@@ -1017,6 +1017,11 @@ class Orchestrator:
                 # Continue with original signal (meta-reasoning is optional)
 
         # -- Step 4: Check confidence threshold --
+        logger.info(
+            "FUSED %s: direction=%s confidence=%.1f%% source=%s",
+            asset, fused_signal.direction.value, fused_signal.confidence,
+            fused_signal.source,
+        )
         if fused_signal.confidence < self.min_confidence:
             result["reason"] = (
                 f"confidence_below_threshold: {fused_signal.confidence:.1f}% "
