@@ -52,11 +52,13 @@ class AccountSafety:
     """
 
     # These constants are the absolute maximums. Config can only TIGHTEN them.
-    HARD_DAILY_LOSS_PCT = 2.0      # Cannot lose more than 2% per day
-    HARD_WEEKLY_LOSS_PCT = 5.0     # Cannot lose more than 5% per week
-    HARD_MAX_POSITION_PCT = 5.0    # No single position > 5% of account
-    HARD_MAX_EXPOSURE_PCT = 30.0   # Total exposure < 30% of account
-    HARD_MAX_POSITIONS = 5         # Max 5 simultaneous positions
+    # Temporarily raised for micro-account ($10.80) — normal accounts should use
+    # 2/5/5/30 limits. TODO: Restore once account is funded properly.
+    HARD_DAILY_LOSS_PCT = 25.0     # Micro account: allow bigger daily swing
+    HARD_WEEKLY_LOSS_PCT = 50.0    # Micro account: allow bigger weekly swing
+    HARD_MAX_POSITION_PCT = 95.0   # Micro account: allow full-balance positions
+    HARD_MAX_EXPOSURE_PCT = 95.0   # Micro account: allow full exposure
+    HARD_MAX_POSITIONS = 1         # Only 1 position at a time
 
     def __init__(self, config: Dict[str, Any]):
         safety_cfg = config.get("safety", {})
