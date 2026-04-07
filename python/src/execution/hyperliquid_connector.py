@@ -13,6 +13,7 @@ The frontend uses MetaMask to sign. The Python backend can use an agent wallet
 API docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -298,31 +299,59 @@ class HyperliquidConnector:
     async def get_balance(self) -> Dict[str, Any]:
         """Get account balance and margin info for self.user_address.
 
+        Checks both perps and spot clearinghouse states to support
+        Hyperliquid's unified account mode where spot balance is
+        available for perp trading.
+
         Returns dict with keys: total, free, used, equity, margin_used, raw.
         """
         if not self.user_address:
             return {"total": 0.0, "free": 0.0, "used": 0.0}
 
-        data = await self._post_info({
-            "type": "clearinghouseState",
-            "user": self.user_address,
-        })
+        # Fetch both perps and spot in parallel
+        perps_data, spot_data = await asyncio.gather(
+            self._post_info({
+                "type": "clearinghouseState",
+                "user": self.user_address,
+            }),
+            self._post_info({
+                "type": "spotClearinghouseState",
+                "user": self.user_address,
+            }),
+            return_exceptions=True,
+        )
 
-        if not data:
-            return {"total": 0.0, "free": 0.0, "used": 0.0}
+        # Parse perps balance
+        perps_value = 0.0
+        margin_used = 0.0
+        withdrawable = 0.0
+        if isinstance(perps_data, dict):
+            margin = perps_data.get("marginSummary", {})
+            perps_value = float(margin.get("accountValue", 0))
+            margin_used = float(margin.get("totalMarginUsed", 0))
+            withdrawable = float(perps_data.get("withdrawable", 0))
 
-        margin = data.get("marginSummary", {})
-        account_value = float(margin.get("accountValue", 0))
-        total_margin_used = float(margin.get("totalMarginUsed", 0))
-        withdrawable = float(data.get("withdrawable", 0))
+        # Parse spot USDC balance (unified account makes this available for perps)
+        spot_usdc = 0.0
+        if isinstance(spot_data, dict):
+            for bal in spot_data.get("balances", []):
+                if bal.get("coin") == "USDC":
+                    spot_usdc = float(bal.get("total", 0))
+                    break
+
+        # Total available = perps equity + spot USDC (unified account)
+        total = perps_value + spot_usdc
+        free = withdrawable + spot_usdc
 
         return {
-            "total": account_value,
-            "free": withdrawable,
-            "used": total_margin_used,
-            "equity": account_value,
-            "margin_used": total_margin_used,
-            "raw": data,
+            "total": total,
+            "free": free,
+            "used": margin_used,
+            "equity": total,
+            "margin_used": margin_used,
+            "spot_usdc": spot_usdc,
+            "perps_value": perps_value,
+            "raw": perps_data if isinstance(perps_data, dict) else {},
         }
 
     async def get_positions(self) -> List[Dict[str, Any]]:
