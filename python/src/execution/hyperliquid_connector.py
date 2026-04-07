@@ -979,11 +979,42 @@ class HyperliquidConnector:
         )
 
     def get_balance_sync(self) -> Dict[str, Any]:
-        """Sync version of get_balance() — returns CCXT-compatible format for ExecutionAgent."""
-        raw = self._run_sync(self.get_balance())
-        free_usd = float(raw.get("free", 0))
+        """Sync version of get_balance() — uses requests for simplicity.
+
+        Checks both perps and spot clearinghouse states to support
+        unified account mode.
+        """
+        import requests
+
+        total = 0.0
+        try:
+            # Check perps
+            r = requests.post(
+                self._info_url,
+                json={"type": "clearinghouseState", "user": self.user_address},
+                timeout=5,
+            )
+            if r.ok:
+                data = r.json()
+                total += float(data.get("marginSummary", {}).get("accountValue", 0))
+
+            # Check spot (unified account mode)
+            r = requests.post(
+                self._info_url,
+                json={"type": "spotClearinghouseState", "user": self.user_address},
+                timeout=5,
+            )
+            if r.ok:
+                data = r.json()
+                for bal in data.get("balances", []):
+                    if bal.get("coin") == "USDC":
+                        total += float(bal.get("total", 0))
+                        break
+        except Exception as e:
+            logger.warning("get_balance_sync failed: %s", e)
+
         return {
-            "total": {"USDC": raw.get("total", 0)},
-            "free": {"USDC": free_usd},
-            "used": {"USDC": raw.get("used", 0)},
+            "total": {"USDC": total},
+            "free": {"USDC": total},
+            "used": {"USDC": 0},
         }
