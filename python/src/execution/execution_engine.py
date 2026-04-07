@@ -655,13 +655,18 @@ class ExecutionAgent:
         else:
             total_value = sum(p.current_price * p.size for p in positions)
             cash = 0.0
-            for connector in self._connectors.values():
+            for name, connector in self._connectors.items():
                 try:
-                    bal = connector.get_balance()
-                    cash += float(bal.get("free", {}).get("USD", 0) or 0)
-                    cash += float(bal.get("free", {}).get("USDT", 0) or 0)
-                except Exception:
-                    pass
+                    get_bal_fn = getattr(connector, "get_balance_sync", None) or connector.get_balance
+                    bal = get_bal_fn()
+                    free = bal.get("free", {})
+                    if isinstance(free, dict):
+                        for currency in ("USD", "USDT", "USDC"):
+                            cash += float(free.get(currency, 0) or 0)
+                    else:
+                        cash += float(free)
+                except Exception as e:
+                    logger.debug("Portfolio state balance fetch failed for %s: %s", name, e)
             total_value += cash
 
         return PortfolioState(
