@@ -908,6 +908,8 @@ class Orchestrator:
             "reason": "",
         }
 
+        logger.info("Processing asset %s (class=%s)", asset, asset_class.value)
+
         # -- Step 0: Check degradation level --
         if not self._degradation.can_open_positions():
             result["reason"] = (
