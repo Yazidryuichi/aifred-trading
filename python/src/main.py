@@ -429,6 +429,14 @@ def main() -> int:
                 config = merge_configs(config, live_overlay)
             logger.info("Live config overlay applied from %s", live_yaml)
 
+    # Log critical config values for debugging
+    logger.info(
+        "CONFIG: min_confidence_threshold=%s, mode=%s, assets=%s",
+        config.get("orchestrator", {}).get("min_confidence_threshold", "NOT SET"),
+        config.get("execution", {}).get("mode", "NOT SET"),
+        list(config.get("assets", {}).get("crypto", [])),
+    )
+
     # Apply CLI overrides
     config = apply_cli_overrides(config, args)
 
