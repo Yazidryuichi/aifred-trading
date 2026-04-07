@@ -1022,6 +1022,7 @@ class Orchestrator:
                 f"confidence_below_threshold: {fused_signal.confidence:.1f}% "
                 f"< {self.min_confidence}%"
             )
+            logger.info("SKIPPED %s: %s", asset, result["reason"])
             self._log_decision(asset, "SKIPPED", result["reason"], fused_signal)
             return result
 
@@ -1047,20 +1048,28 @@ class Orchestrator:
 
         if not risk_decision.approved:
             result["reason"] = f"risk_rejected: {risk_decision.reason}"
+            logger.info("RISK REJECTED %s: %s", asset, risk_decision.reason)
             self._log_decision(asset, "REJECTED", risk_decision.reason, fused_signal)
             return result
 
         # -- Step 7: Execute trade --
+        logger.info("EXECUTING trade for %s: %s %s size=%.6f value=$%.2f",
+                     asset, fused_signal.direction.value, proposal.asset,
+                     proposal.position_size, proposal.position_value)
         trade_result = self._execute_trade(proposal, risk_decision)
         if trade_result is None:
             result["reason"] = "execution_agent_unavailable"
+            logger.info("EXECUTION UNAVAILABLE for %s", asset)
             return result
 
         if trade_result.status == TradeStatus.FILLED:
             result["trade_executed"] = True
+            logger.info("TRADE FILLED %s: %s @ $%.2f, size=%.6f",
+                         asset, trade_result.exchange, trade_result.fill_price, trade_result.fill_size)
             self._on_trade_executed(asset, trade_result, fused_signal)
         elif trade_result.status == TradeStatus.FAILED:
             result["reason"] = f"execution_failed: {trade_result.error}"
+            logger.info("TRADE FAILED %s: %s", asset, trade_result.error)
             self._circuit_breaker.record_trade(0.0, success=False)
 
         return result
