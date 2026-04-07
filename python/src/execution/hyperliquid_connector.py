@@ -973,10 +973,104 @@ class HyperliquidConnector:
         amount: float, price: Optional[float] = None,
         params: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Sync version of place_order() — used by OrderManager."""
-        return self._run_sync(
-            self.place_order(symbol, side, order_type, amount, price, params)
+        """Sync version of place_order() — uses requests instead of aiohttp."""
+        import requests as sync_requests
+
+        if not self._private_key:
+            raise RuntimeError("Cannot place orders without private key.")
+
+        params = params or {}
+        coin = self._normalize_coin(symbol)
+        asset_index = self._get_asset_index(coin)
+        is_buy = side.lower() == "buy"
+
+        rounded_size = self._round_size(coin, amount)
+        if rounded_size <= 0:
+            raise ValueError(f"Order size too small after rounding: {amount}")
+
+        # Determine price
+        if order_type == "market":
+            slippage_pct = params.get("slippage_pct", 1.0)
+            if price is None:
+                # Fetch mid price synchronously
+                r = sync_requests.post(
+                    self._info_url,
+                    json={"type": "allMids"},
+                    timeout=5,
+                )
+                mids = r.json() if r.ok else {}
+                mid = float(mids.get(coin, 0))
+                if mid <= 0:
+                    raise ValueError(f"Cannot determine market price for {coin}")
+                price = mid
+            limit_px = self._round_price(
+                price * (1 + slippage_pct / 100) if is_buy
+                else price * (1 - slippage_pct / 100)
+            )
+        else:
+            if price is None:
+                raise ValueError("Price is required for limit orders")
+            limit_px = self._round_price(price)
+
+        tif = params.get("tif", "Ioc" if order_type == "market" else "Gtc")
+        reduce_only = params.get("reduce_only", False)
+
+        order_wire = {
+            "a": asset_index,
+            "b": is_buy,
+            "p": _float_to_wire(limit_px),
+            "s": _float_to_wire(rounded_size, self._asset_sz_decimals.get(coin, 8)),
+            "r": reduce_only,
+            "t": _order_type_to_wire(order_type, limit_px, tif),
+        }
+
+        action = {
+            "type": "order",
+            "orders": [order_wire],
+            "grouping": "na",
+        }
+
+        payload = self._build_signed_payload(action, vault_address=params.get("vault_address"))
+
+        # Submit via sync requests
+        r = sync_requests.post(
+            self._exchange_url,
+            json=payload,
+            timeout=10,
         )
+        result = r.json() if r.ok else {"status": "err", "response": r.text}
+
+        if result.get("status") == "err":
+            return {
+                "id": None,
+                "symbol": f"{coin}/USDT",
+                "side": side,
+                "status": "rejected",
+                "info": result.get("response", "Unknown error"),
+                "exchange": "hyperliquid",
+            }
+
+        statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
+        first = statuses[0] if statuses else {}
+        oid = (
+            first.get("resting", {}).get("oid")
+            or first.get("filled", {}).get("oid")
+            or f"hl_{int(time.time() * 1000)}"
+        )
+
+        return {
+            "id": str(oid),
+            "symbol": f"{coin}/USDT",
+            "side": side,
+            "type": order_type,
+            "amount": rounded_size,
+            "price": limit_px,
+            "average": limit_px,
+            "status": "filled" if "filled" in first else "open",
+            "fee": {"cost": 0, "currency": "USDC"},
+            "exchange": "hyperliquid",
+            "raw": result,
+        }
 
     def get_balance_sync(self) -> Dict[str, Any]:
         """Sync version of get_balance() — uses requests for simplicity.
