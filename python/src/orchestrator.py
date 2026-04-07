@@ -722,6 +722,7 @@ class Orchestrator:
         signals_generated = 0
         trades_executed = 0
 
+        logger.info("Scanning %d assets: %s", len(self._assets), list(self._assets.keys()))
         for asset, asset_class in self._assets.items():
             try:
                 result = await self._process_asset(asset, asset_class)
