@@ -1321,7 +1321,8 @@ class Orchestrator:
                 },
             )
 
-        if sentiment_signal is None:
+        if sentiment_signal is None or sentiment_signal.confidence <= 0:
+            # Treat zero-confidence sentiment as absent (avoids geometric mean → 0)
             return Signal(
                 asset=asset,
                 direction=tech_signal.direction,
