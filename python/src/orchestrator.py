@@ -1517,6 +1517,19 @@ class Orchestrator:
                 stop_distance_pct=stop_distance_pct,
             )
 
+            # Enforce minimum position value for micro accounts
+            # With $10.80 portfolio, Kelly can produce $0.11 — too small for exchanges
+            min_position_value = max(
+                portfolio_value * 0.50,  # At least 50% of portfolio
+                5.0,  # Absolute minimum $5
+            )
+            if position_value < min_position_value:
+                logger.info(
+                    "Position value $%.2f below minimum $%.2f, adjusting up",
+                    position_value, min_position_value,
+                )
+                position_value = min(min_position_value, portfolio_value * 0.90)
+
             position_size = position_value / entry_price if entry_price > 0 else 0.0
 
             # Order type

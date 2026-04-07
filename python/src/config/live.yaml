@@ -21,11 +21,12 @@ orchestrator:
   max_daily_trades: 8
 
 risk:
-  max_position_pct: 80.0  # Use up to 80% of actual balance ($8.64 of $10.80)
+  max_position_pct: 90.0  # Use up to 90% of balance for micro account
+  min_position_pct: 50.0  # At least 50% of balance per trade (ensures minimum order size)
   max_concurrent_positions: 1
-  max_single_trade_loss: 5.0  # $0.54 max loss on $10.80
+  max_single_trade_loss: 10.0  # Allow bigger loss on micro account
   min_account_balance: 1.0  # Lower from $5 to allow micro trades
-  portfolio_value: 10.80  # Override default $10000 — use actual balance
+  portfolio_value: 10.80  # Override default $10000
 
 safety:
   daily_loss_limit_pct: 10.0
