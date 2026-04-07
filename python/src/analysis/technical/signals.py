@@ -336,6 +336,18 @@ class TechnicalAnalysisAgent:
             "atr": float(df["atr"].iloc[-1]) if "atr" in df.columns else None,
         }
 
+        # ── Rule-based fallback when ML models are untrained ──────
+        # If ensemble confidence is very low (<10%), the models are untrained.
+        # Fall back to indicator-based signal generation.
+        if ensemble_signal.confidence < 10.0:
+            rule_signal = self._generate_rule_signal(asset, timeframe, indicator_feats, rule_val)
+            if rule_signal is not None:
+                logger.info(
+                    "[%s] ML confidence too low (%.1f%%), using rule-based signal: %s %.1f%%",
+                    asset, ensemble_signal.confidence, rule_signal.direction.value, rule_signal.confidence,
+                )
+                return rule_signal
+
         # ── Signal gating ──────────────────────────────────────────
         pre_gate_dir = ensemble_signal.direction.value
         pre_gate_conf = ensemble_signal.confidence
@@ -348,6 +360,85 @@ class TechnicalAnalysisAgent:
         )
 
         return ensemble_signal
+
+    def _generate_rule_signal(
+        self, asset: str, timeframe: str,
+        indicators: Dict[str, float], rule_val: float,
+    ) -> Optional[Signal]:
+        """Generate a signal from indicators when ML models are untrained.
+
+        Uses RSI, MACD histogram, Bollinger %B, and ADX to determine direction.
+        Returns None if indicators are inconclusive.
+        """
+        rsi = indicators.get("rsi", 50)
+        macd_hist = indicators.get("macd_hist", 0)
+        bb_pct = indicators.get("bb_pct", 0.5)
+        adx = indicators.get("adx", 0)
+        volume_ratio = indicators.get("volume_ratio", 1.0)
+
+        # Count bullish/bearish signals
+        bull_count = 0
+        bear_count = 0
+
+        # RSI: <30 = oversold (bullish), >70 = overbought (bearish)
+        if rsi < 35:
+            bull_count += 1
+        elif rsi > 65:
+            bear_count += 1
+
+        # MACD histogram: positive = bullish, negative = bearish
+        if macd_hist > 0:
+            bull_count += 1
+        elif macd_hist < 0:
+            bear_count += 1
+
+        # Bollinger %B: <0.2 = near lower band (bullish), >0.8 = near upper (bearish)
+        if bb_pct < 0.25:
+            bull_count += 1
+        elif bb_pct > 0.75:
+            bear_count += 1
+
+        # ADX > 25 = trending (amplifies signal), < 20 = ranging (reduce confidence)
+        trend_strength = min(adx / 40.0, 1.0) if adx > 20 else 0.5
+
+        # Volume confirmation
+        vol_boost = 1.0 if volume_ratio > 1.2 else 0.85
+
+        # Rule signal from compute_rule_signals
+        if rule_val > 0.3:
+            bull_count += 1
+        elif rule_val < -0.3:
+            bear_count += 1
+
+        # Need at least 2 signals agreeing
+        if bull_count >= 2 and bull_count > bear_count:
+            direction = Direction.BUY
+            base_conf = 55 + (bull_count - 2) * 10  # 55%, 65%, 75% for 2,3,4 signals
+        elif bear_count >= 2 and bear_count > bull_count:
+            direction = Direction.SELL
+            base_conf = 55 + (bear_count - 2) * 10
+        else:
+            return None  # Inconclusive
+
+        confidence = min(base_conf * trend_strength * vol_boost, 95.0)
+
+        return Signal(
+            asset=asset,
+            direction=direction,
+            confidence=confidence,
+            source="technical_rules",
+            timeframe=timeframe,
+            metadata={
+                "fusion_method": "rule_based_fallback",
+                "indicators": indicators,
+                "rule_signal": rule_val,
+                "bull_count": bull_count,
+                "bear_count": bear_count,
+                "trend_strength": trend_strength,
+                "volume_ratio": volume_ratio,
+                "reason": "ml_models_untrained_fallback",
+            },
+        )
 
     def _apply_signal_gates(
         self,
