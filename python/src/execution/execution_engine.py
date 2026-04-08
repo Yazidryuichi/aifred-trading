@@ -204,9 +204,9 @@ class ExecutionAgent:
                         status=TradeStatus.REJECTED,
                         error=msg,
                     )
-                if free_balance < proposal.position_value * 1.05:  # 5% buffer for fees
+                if free_balance < proposal.position_value * 1.005:  # 0.5% buffer for fees (HL fees ~0.04%)
                     msg = (f"insufficient_balance: ${free_balance:.2f} < "
-                           f"${proposal.position_value * 1.05:.2f} (position + fees)")
+                           f"${proposal.position_value * 1.005:.2f} (position + fees)")
                     logger.warning("BALANCE CHECK FAILED: %s", msg)
                     return TradeResult(
                         proposal=proposal,
