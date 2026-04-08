@@ -56,8 +56,8 @@ class AccountSafety:
     # 2/5/5/30 limits. TODO: Restore once account is funded properly.
     HARD_DAILY_LOSS_PCT = 25.0     # Micro account: allow bigger daily swing
     HARD_WEEKLY_LOSS_PCT = 50.0    # Micro account: allow bigger weekly swing
-    HARD_MAX_POSITION_PCT = 95.0   # Micro account: allow full-balance positions
-    HARD_MAX_EXPOSURE_PCT = 95.0   # Micro account: allow full exposure
+    HARD_MAX_POSITION_PCT = 100.0  # Micro account: allow full-balance positions
+    HARD_MAX_EXPOSURE_PCT = 100.0  # Micro account: allow full exposure
     HARD_MAX_POSITIONS = 1         # Only 1 position at a time
 
     def __init__(self, config: Dict[str, Any]):
