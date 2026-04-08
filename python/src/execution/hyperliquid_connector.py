@@ -1035,6 +1035,7 @@ class HyperliquidConnector:
             timeout=10,
         )
         result = r.json() if r.ok else {"status": "err", "response": r.text}
+        logger.info("Hyperliquid exchange response: %s", json.dumps(result)[:500])
 
         if result.get("status") == "err":
             return {
