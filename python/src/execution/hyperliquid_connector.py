@@ -61,16 +61,22 @@ def _action_hash(action: Dict, vault_address: Optional[str],
                  nonce: int) -> bytes:
     """Compute the action hash used for EIP-712 signing on Hyperliquid.
 
-    Hyperliquid uses a custom hashing scheme over the action JSON + nonce,
-    not standard EIP-712 struct hashing. This mirrors the SDK's approach.
+    Uses msgpack serialization + keccak256 hashing, matching the official SDK.
     """
-    # Serialize action deterministically
-    action_bytes = json.dumps(action, separators=(",", ":"), sort_keys=True).encode()
-    # Build the data to hash: action_bytes + nonce (big-endian u64) + vault
-    data = action_bytes + struct.pack(">Q", nonce)
-    if vault_address:
+    import msgpack
+    from eth_hash.auto import keccak
+
+    # Serialize action with msgpack (NOT JSON — this is critical)
+    data = msgpack.packb(action)
+    # Append nonce as big-endian u64
+    data += nonce.to_bytes(8, "big")
+    # Append vault address flag byte
+    if vault_address is None:
+        data += b"\x00"
+    else:
+        data += b"\x01"
         data += bytes.fromhex(vault_address[2:] if vault_address.startswith("0x") else vault_address)
-    return hashlib.sha256(data).digest()
+    return bytes(keccak(data))
 
 
 # ---------------------------------------------------------------------------
@@ -577,69 +583,59 @@ class HyperliquidConnector:
     def _sign_action(
         self, action: Dict, nonce: int, vault_address: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Sign an action using EIP-712 via eth_account.
+        """Sign an action using EIP-712, matching the official Hyperliquid SDK.
 
-        Args:
-            action: The action dict (e.g. order placement).
-            nonce: Timestamp nonce in ms.
-            vault_address: Optional vault address.
-
-        Returns:
-            Dict with 'r', 's', 'v' signature components.
-
-        Raises:
-            RuntimeError: If eth_account is not installed.
+        Uses: msgpack action hash → phantom agent → EIP-712 typed data → eth_account sign.
         """
         try:
             from eth_account import Account
+            from eth_account.messages import encode_typed_data
         except ImportError:
             raise RuntimeError(
                 "eth_account required for signing. Install: pip install eth-account"
             )
 
-        # Hyperliquid uses a phantom EIP-712 typed data structure
-        # The actual message to sign is the connection action hash
-        action_hash = _action_hash(action, vault_address, nonce)
+        # Step 1: Compute action hash (msgpack + keccak256)
+        hash_bytes = _action_hash(action, vault_address, nonce)
 
-        # Build the EIP-712 typed data that Hyperliquid expects
-        domain = {
-            "name": "Exchange",
-            "version": "1",
-            "chainId": self._chain_id,
-            "verifyingContract": "0x0000000000000000000000000000000000000000",
-        }
-
-        # Hyperliquid's EIP-712 type for agent actions
-        types = {
-            "EIP712Domain": [
-                {"name": "name", "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
-                {"name": "verifyingContract", "type": "address"},
-            ],
-            "Agent": [
-                {"name": "source", "type": "string"},
-                {"name": "connectionId", "type": "bytes32"},
-            ],
-        }
-
-        message = {
+        # Step 2: Build phantom agent (matches SDK's construct_phantom_agent)
+        phantom_agent = {
             "source": "a" if not self._testnet else "b",
-            "connectionId": action_hash,
+            "connectionId": hash_bytes,
         }
 
-        # Sign with eth_account
-        from eth_account.messages import encode_typed_data
-        signable = encode_typed_data(
-            domain_data=domain,
-            message_types={"Agent": types["Agent"]},
-            message_data=message,
-        )
-        signed = Account.sign_message(signable, private_key=self._private_key)
+        # Step 3: Build full EIP-712 payload (matches SDK's l1_payload)
+        full_message = {
+            "domain": {
+                "chainId": 1337,
+                "name": "Exchange",
+                "verifyingContract": "0x0000000000000000000000000000000000000000",
+                "version": "1",
+            },
+            "types": {
+                "Agent": [
+                    {"name": "source", "type": "string"},
+                    {"name": "connectionId", "type": "bytes32"},
+                ],
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "version", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"},
+                ],
+            },
+            "primaryType": "Agent",
+            "message": phantom_agent,
+        }
 
+        # Step 4: Sign (matches SDK's sign_inner)
+        structured_data = encode_typed_data(full_message=full_message)
+        signed = Account.sign_message(structured_data, private_key=self._private_key)
+
+        from eth_utils import to_hex as eth_to_hex
         return {
-            "r": hex(signed.r),
-            "s": hex(signed.s),
+            "r": eth_to_hex(signed.r),
+            "s": eth_to_hex(signed.s),
             "v": signed.v,
         }
 
