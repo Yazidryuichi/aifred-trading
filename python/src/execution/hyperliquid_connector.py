@@ -1049,6 +1049,18 @@ class HyperliquidConnector:
 
         statuses = result.get("response", {}).get("data", {}).get("statuses", [{}])
         first = statuses[0] if statuses else {}
+
+        # Check for error in status response
+        if "error" in first:
+            return {
+                "id": None,
+                "symbol": f"{coin}/USDT",
+                "side": side,
+                "status": "rejected",
+                "info": first["error"],
+                "exchange": "hyperliquid",
+            }
+
         oid = (
             first.get("resting", {}).get("oid")
             or first.get("filled", {}).get("oid")
