@@ -19,8 +19,9 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements-railway.txt
 
-# Copy source code and config (cache bust: 2026-04-07-v3)
+# Copy source code, config, and trained model checkpoints
 COPY src/ /app/src/
+COPY checkpoints/ /app/checkpoints/
 COPY paper_trading.py /app/paper_trading.py
 COPY health_server.py /app/health_server.py
 COPY start.sh /app/start.sh

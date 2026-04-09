@@ -182,8 +182,46 @@ class TechnicalAnalysisAgent:
             checkpoint_dir=self.checkpoint_dir,
         )
 
+        # Load pre-trained checkpoints if available
+        self._load_checkpoints()
+
         self._is_initialized = True
         logger.info(f"TechnicalAnalysisAgent initialized with {n_features} features")
+
+    def _load_checkpoints(self) -> None:
+        """Load pre-trained model checkpoints if they exist."""
+        import os
+        ckpt_dir = self.checkpoint_dir
+        loaded = []
+
+        lstm_path = os.path.join(ckpt_dir, "lstm_latest.pt")
+        if os.path.exists(lstm_path) and self._lstm:
+            try:
+                self._lstm.load(lstm_path)
+                loaded.append("LSTM")
+            except Exception as e:
+                logger.warning("Failed to load LSTM checkpoint: %s", e)
+
+        tf_path = os.path.join(ckpt_dir, "transformer_latest.pt")
+        if os.path.exists(tf_path) and self._transformer:
+            try:
+                self._transformer.load(tf_path)
+                loaded.append("Transformer")
+            except Exception as e:
+                logger.warning("Failed to load Transformer checkpoint: %s", e)
+
+        cnn_path = os.path.join(ckpt_dir, "cnn_latest.pt")
+        if os.path.exists(cnn_path) and self._cnn:
+            try:
+                self._cnn.load(cnn_path)
+                loaded.append("CNN")
+            except Exception as e:
+                logger.warning("Failed to load CNN checkpoint: %s", e)
+
+        if loaded:
+            logger.info("Loaded pre-trained checkpoints: %s", ", ".join(loaded))
+        else:
+            logger.info("No pre-trained checkpoints found in %s — using untrained models", ckpt_dir)
 
     def analyze(
         self,
