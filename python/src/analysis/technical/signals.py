@@ -404,20 +404,19 @@ class TechnicalAnalysisAgent:
         # Volume confirmation
         vol_boost = 1.0 if volume_ratio > 1.2 else 0.85
 
-        # Rule signal from compute_rule_signals (lowered threshold for micro account)
-        if rule_val > 0.1:
+        # Rule signal from compute_rule_signals
+        if rule_val > 0.2:
             bull_count += 1
-        elif rule_val < -0.1:
+        elif rule_val < -0.2:
             bear_count += 1
 
-        # Need at least 1 signal for first trade validation
-        # TODO: Raise back to 2 after first trade executes
-        if bull_count >= 1 and bull_count > bear_count:
+        # Need at least 2 indicators agreeing for a signal
+        if bull_count >= 2 and bull_count > bear_count:
             direction = Direction.BUY
-            base_conf = 45 + (bull_count - 1) * 10  # 45%, 55%, 65%, 75% for 1,2,3,4 signals
-        elif bear_count >= 1 and bear_count > bull_count:
+            base_conf = 55 + (bull_count - 2) * 10  # 55%, 65%, 75% for 2,3,4 signals
+        elif bear_count >= 2 and bear_count > bull_count:
             direction = Direction.SELL
-            base_conf = 45 + (bear_count - 1) * 10
+            base_conf = 55 + (bear_count - 2) * 10
         else:
             return None  # Inconclusive
 

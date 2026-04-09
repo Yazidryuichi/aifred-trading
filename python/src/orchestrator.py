@@ -1102,6 +1102,25 @@ class Orchestrator:
             logger.info("TRADE FILLED %s: %s @ $%.2f, size=%.6f",
                          asset, trade_result.exchange, trade_result.fill_price, trade_result.fill_size)
             self._on_trade_executed(asset, trade_result, fused_signal)
+
+            # Place stop-loss on Hyperliquid immediately after fill
+            try:
+                if self._execution_agent and proposal.stop_loss and proposal.stop_loss > 0:
+                    for name, conn in self._execution_agent._connectors.items():
+                        if hasattr(conn, 'place_stop_loss_sync'):
+                            sl_side = "buy" if proposal.direction in (Direction.SELL, Direction.STRONG_SELL) else "sell"
+                            conn.place_stop_loss_sync(
+                                symbol=asset,
+                                side=sl_side,
+                                size=trade_result.fill_size,
+                                stop_price=proposal.stop_loss,
+                            )
+                            logger.info("Stop-loss placed for %s @ $%.2f (size=%.6f)",
+                                         asset, proposal.stop_loss, trade_result.fill_size)
+                            break
+            except Exception as e:
+                logger.error("Failed to place stop-loss for %s: %s", asset, e)
+
         elif trade_result.status == TradeStatus.FAILED:
             result["reason"] = f"execution_failed: {trade_result.error}"
             logger.info("TRADE FAILED %s: %s", asset, trade_result.error)

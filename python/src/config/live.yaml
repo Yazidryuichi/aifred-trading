@@ -14,11 +14,10 @@ assets:
   forex: []
 
 orchestrator:
-  # Temporarily set to 20 to validate execution pipeline with first trade
-  # Rule-based fallback produces 28-55% signals, × 0.85 single-source = 24-47%
-  # TODO: Raise to 65 once models are trained and Reddit API keys arrive
-  min_confidence_threshold: 20
-  max_daily_trades: 2  # Reduced from 8 — micro account can't afford many trades
+  # Raised to 35 — requires 2+ indicator confirmation (55%+ raw × 0.85 = 46%+)
+  # Only strong signals pass. TODO: Raise to 65 once ML models trained.
+  min_confidence_threshold: 35
+  max_daily_trades: 2  # Micro account: max 2 trades per day
 
 risk:
   max_position_pct: 100.0
@@ -26,8 +25,8 @@ risk:
   max_concurrent_positions: 1
   max_single_trade_loss: 10.0
   min_account_balance: 1.0
-  portfolio_value: 10.80
-  max_asset_class_exposure_pct: 100.0  # Micro account: allow 100% crypto exposure
+  portfolio_value: 5.50
+  max_asset_class_exposure_pct: 100.0
   max_single_asset_exposure_pct: 100.0
 
 safety:
@@ -48,8 +47,8 @@ execution:
   hyperliquid:
     enabled: true
     testnet: false
-    default_leverage: 2
-    max_leverage: 2
+    default_leverage: 3
+    max_leverage: 3
 
 data:
   websocket:

@@ -980,6 +980,13 @@ class HyperliquidConnector:
         asset_index = self._get_asset_index(coin)
         is_buy = side.lower() == "buy"
 
+        # Set leverage before placing order (default 3x isolated for safety)
+        target_leverage = params.get("leverage", 3)
+        try:
+            self._set_leverage_sync(coin, asset_index, target_leverage)
+        except Exception as e:
+            logger.warning("Failed to set leverage for %s: %s", coin, e)
+
         rounded_size = self._round_size(coin, amount)
         if rounded_size <= 0:
             raise ValueError(f"Order size too small after rounding: {amount}")
@@ -1080,6 +1087,49 @@ class HyperliquidConnector:
             "exchange": "hyperliquid",
             "raw": result,
         }
+
+    def _set_leverage_sync(self, coin: str, asset_index: int, leverage: int = 3) -> None:
+        """Set leverage for an asset before placing orders (sync)."""
+        import requests as sync_requests
+
+        action = {
+            "type": "updateLeverage",
+            "asset": asset_index,
+            "isCross": False,  # Use isolated margin for safety
+            "leverage": leverage,
+        }
+        payload = self._build_signed_payload(action)
+        r = sync_requests.post(self._exchange_url, json=payload, timeout=10)
+        result = r.json() if r.ok else {}
+        logger.info("Set leverage for %s to %dx isolated: %s", coin, leverage, result.get("status", "unknown"))
+
+    def place_stop_loss_sync(
+        self, symbol: str, side: str, size: float, stop_price: float
+    ) -> Dict[str, Any]:
+        """Place a stop-loss order on Hyperliquid (sync)."""
+        import requests as sync_requests
+
+        coin = self._normalize_coin(symbol)
+        asset_index = self._get_asset_index(coin)
+        is_buy = side.lower() == "buy"
+        rounded_size = self._round_size(coin, size)
+        trigger_px = self._round_price(stop_price)
+
+        order_wire = {
+            "a": asset_index,
+            "b": is_buy,
+            "p": _float_to_wire(trigger_px),
+            "s": _float_to_wire(rounded_size, self._asset_sz_decimals.get(coin, 8)),
+            "r": True,  # reduce_only for stop-loss
+            "t": {"trigger": {"triggerPx": _float_to_wire(trigger_px), "isMarket": True, "tpsl": "sl"}},
+        }
+
+        action = {"type": "order", "orders": [order_wire], "grouping": "na"}
+        payload = self._build_signed_payload(action)
+        r = sync_requests.post(self._exchange_url, json=payload, timeout=10)
+        result = r.json() if r.ok else {"status": "err", "response": r.text}
+        logger.info("Stop-loss for %s @ $%.2f: %s", coin, stop_price, json.dumps(result)[:200])
+        return result
 
     def get_balance_sync(self) -> Dict[str, Any]:
         """Sync version of get_balance() — uses requests for simplicity.
