@@ -111,13 +111,12 @@ class RiskGate:
                     f"{proposal.confidence:.0f}%"
                 )
 
-        # Temporarily allow all tiers for first trade validation
-        # TODO: Re-enable tier gating once models are trained
-        # if tier in ("B", "C"):
-        #     return False, tier, (
-        #         f"Signal tier {tier} rejected (confidence {proposal.confidence:.0f}%): "
-        #         f"only A+ and A tier trades are allowed"
-        #     )
+        # Only allow A+ and A tier signals
+        if tier in ("B", "C"):
+            return False, tier, (
+                f"Signal tier {tier} rejected (confidence {proposal.confidence:.0f}%): "
+                f"only A+ and A tier trades are allowed"
+            )
 
         return True, tier, f"{tier} tier signal at {proposal.confidence:.0f}% confidence"
 

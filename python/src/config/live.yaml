@@ -14,9 +14,8 @@ assets:
   forex: []
 
 orchestrator:
-  # Raised to 35 — requires 2+ indicator confirmation (55%+ raw × 0.85 = 46%+)
-  # Only strong signals pass. TODO: Raise to 65 once ML models trained.
-  min_confidence_threshold: 35
+  # Restored to 80% — execution pipeline validated, only high-conviction trades
+  min_confidence_threshold: 80
   max_daily_trades: 2  # Micro account: max 2 trades per day
 
 risk:
