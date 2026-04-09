@@ -13,6 +13,20 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 echo "[start.sh] Starting AIFred Trading Engine on Railway"
+
+# Download trained model checkpoints from GitHub if not present
+CKPT_DIR="/app/checkpoints/technical"
+if [ ! -f "$CKPT_DIR/lstm_latest.pt" ]; then
+    echo "[start.sh] Downloading trained model checkpoints..."
+    mkdir -p "$CKPT_DIR"
+    REPO_BASE="https://raw.githubusercontent.com/Yazidryuichi/aifred-trading/main/python/checkpoints/technical"
+    curl -sL "$REPO_BASE/lstm_latest.pt" -o "$CKPT_DIR/lstm_latest.pt" && echo "[start.sh] LSTM checkpoint downloaded"
+    curl -sL "$REPO_BASE/transformer_latest.pt" -o "$CKPT_DIR/transformer_latest.pt" && echo "[start.sh] Transformer checkpoint downloaded"
+    curl -sL "$REPO_BASE/cnn_latest.pt" -o "$CKPT_DIR/cnn_latest.pt" && echo "[start.sh] CNN checkpoint downloaded"
+    ls -la "$CKPT_DIR/"
+else
+    echo "[start.sh] Model checkpoints already present"
+fi
 echo "[start.sh] PORT=${PORT:-8080}"
 echo "[start.sh] mode=$MODE, dry_run=$DRY_RUN"
 echo "[start.sh] Contents of /app/src/:"
