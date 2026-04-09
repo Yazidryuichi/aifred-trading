@@ -911,7 +911,37 @@ class Orchestrator:
 
         logger.info("Processing asset %s (class=%s)", asset, asset_class.value)
 
-        # -- Step 0: Check degradation level --
+        # -- Step 0a: Skip if already have an open position on this asset --
+        if self._execution_agent:
+            existing_positions = self._execution_agent._positions
+            if asset in existing_positions:
+                result["reason"] = f"position_already_open: {asset}"
+                logger.info("Skipping %s — already have open position", asset)
+                return result
+
+        # Also check Hyperliquid directly for open positions (sync HTTP call)
+        try:
+            import requests as _req
+            hl_address = os.environ.get("HYPERLIQUID_ADDRESS", "")
+            if hl_address:
+                r = _req.post(
+                    "https://api.hyperliquid.xyz/info",
+                    json={"type": "clearinghouseState", "user": hl_address},
+                    timeout=5,
+                )
+                if r.ok:
+                    hl_data = r.json()
+                    asset_base = asset.split("/")[0]
+                    for ap in hl_data.get("assetPositions", []):
+                        pos = ap.get("position", {})
+                        if pos.get("coin") == asset_base and float(pos.get("szi", 0)) != 0:
+                            result["reason"] = f"position_already_open_on_hyperliquid: {asset_base} size={pos['szi']}"
+                            logger.info("Skipping %s — open position on Hyperliquid (size=%s)", asset, pos["szi"])
+                            return result
+        except Exception as e:
+            logger.debug("Hyperliquid position check failed: %s", e)
+
+        # -- Step 0b: Check degradation level --
         if not self._degradation.can_open_positions():
             result["reason"] = (
                 f"degradation_level_{self._degradation.current_level.name}"

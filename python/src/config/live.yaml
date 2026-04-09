@@ -18,7 +18,7 @@ orchestrator:
   # Rule-based fallback produces 28-55% signals, × 0.85 single-source = 24-47%
   # TODO: Raise to 65 once models are trained and Reddit API keys arrive
   min_confidence_threshold: 20
-  max_daily_trades: 8
+  max_daily_trades: 2  # Reduced from 8 — micro account can't afford many trades
 
 risk:
   max_position_pct: 100.0
