@@ -496,7 +496,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Store credentials in the secrets file (never in the connections JSON)
+    // Validate credential fields don't contain obvious injection patterns
+    for (const [key, value] of Object.entries(credentials)) {
+      if (typeof value !== "string") {
+        return NextResponse.json(
+          { success: false, message: `Invalid credential type for ${key}` },
+          { status: 400 },
+        );
+      }
+      if (value.length > 2000) {
+        return NextResponse.json(
+          { success: false, message: `Credential ${key} exceeds max length (2000)` },
+          { status: 400 },
+        );
+      }
+    }
+
+    // Store credentials encrypted in the secrets file (never in connections JSON)
+    // WARNING: On Vercel serverless, /tmp is ephemeral — credentials may be lost
+    // between cold starts. For persistent credential storage, use env vars or
+    // a database with encryption at rest.
     const secrets = readSecrets();
     secrets[brokerId] = credentials;
     writeSecrets(secrets);

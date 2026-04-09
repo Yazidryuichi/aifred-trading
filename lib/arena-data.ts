@@ -1,6 +1,7 @@
 // ─── Arena Competition Data Generator ─────────────────────────
-// Generates realistic competition data for 3 AI strategies
-// Uses random walk with drift + mean reversion for equity curves
+// DISCLAIMER: This data is SIMULATED for demonstration purposes.
+// It does NOT represent real trading performance or live competition results.
+// Uses deterministic random walk with drift + mean reversion for equity curves.
 
 export interface StrategyInfo {
   id: string;

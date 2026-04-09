@@ -56,11 +56,24 @@ export default function ArenaPanel() {
                 className="text-xs text-zinc-500 tracking-wider"
                 style={{ fontFamily: "JetBrains Mono, monospace" }}
               >
-                Multi-AI Strategy Battle &bull; Real-time
+                Multi-AI Strategy Battle &bull; Simulated Demo
               </p>
             </div>
           </div>
         </motion.div>
+
+        {/* Disclaimer banner */}
+        <div className="mb-6 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+          <span className="text-amber-400 text-lg mt-0.5">⚠</span>
+          <div>
+            <p className="text-amber-300 text-sm font-semibold mb-1">SIMULATED DATA — Not Real Performance</p>
+            <p className="text-zinc-400 text-xs leading-relaxed">
+              This competition uses simulated equity curves generated from statistical models (random walk with drift).
+              It does NOT represent real trading results, live AI competition, or actual market performance.
+              Real trading involves substantial risk of loss. Past hypothetical performance does not guarantee future results.
+            </p>
+          </div>
+        </div>
 
         {/* Main grid: Chart + Leaderboard */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
