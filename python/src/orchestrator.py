@@ -648,6 +648,15 @@ class Orchestrator:
         Follows close-before-open pattern: check existing positions for exits
         BEFORE scanning for new entry signals.
         """
+        # Health-server kill switch (POST /kill creates data/.kill_switch)
+        health_kill_file = os.path.join(
+            self.config.get("data", {}).get("base_dir", "data"),
+            ".kill_switch",
+        )
+        if os.path.exists(health_kill_file):
+            logger.warning("Kill switch active (data/.kill_switch exists) — skipping scan cycle")
+            return
+
         # File-based kill switch (Railway-friendly emergency stop)
         kill_file = os.path.join(
             self.config.get("data", {}).get("base_dir", "data"),
@@ -952,6 +961,35 @@ class Orchestrator:
                 self._degradation.current_level.name, asset,
             )
             return result
+
+        # -- Step 0c: FAIL-SAFE — Block live trading when AI keys are missing --
+        # In live mode, the system MUST have AI intelligence (meta-reasoning LLM
+        # and/or LLM sentiment) to validate signals before execution. Without AI
+        # keys, only technical models run, which is insufficient for live trading.
+        if not self._paper_mode:
+            has_meta = (
+                self._meta_agent is not None and self._meta_agent.enabled
+            )
+            has_llm_key = bool(os.environ.get("ANTHROPIC_API_KEY") or
+                               os.environ.get("OPENAI_API_KEY"))
+            if not has_meta and not has_llm_key:
+                result["reason"] = (
+                    "ai_keys_missing_in_live_mode: ANTHROPIC_API_KEY and "
+                    "OPENAI_API_KEY are both unset. Refusing to trade without "
+                    "AI validation. Set API keys or switch to paper mode."
+                )
+                logger.critical(
+                    "FAIL-SAFE: Blocking trade for %s — no AI API keys in "
+                    "live mode. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
+                    asset,
+                )
+                if self._telegram:
+                    self._telegram.send_alert(
+                        "FAIL-SAFE: AI API keys missing in LIVE mode. "
+                        "All trades blocked until keys are configured.",
+                        AlertType.SYSTEM_ERROR,
+                    )
+                return result
 
         # -- Step 1: Collect Technical Signal --
         tech_signal = self._get_technical_signal(asset)

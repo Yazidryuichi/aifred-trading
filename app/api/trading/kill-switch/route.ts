@@ -4,7 +4,8 @@ import { join } from "path";
 
 export const dynamic = "force-dynamic";
 
-const PYTHON_API = process.env.PYTHON_TRADING_API || process.env.RAILWAY_BACKEND_URL || "http://localhost:8080";
+const RAILWAY_BACKEND_URL = process.env.RAILWAY_BACKEND_URL;
+const PYTHON_API = RAILWAY_BACKEND_URL || process.env.PYTHON_TRADING_API || "http://localhost:8080";
 
 const TMP_DIR = "/tmp/aifred-data";
 const KILL_SWITCH_PATH = join(TMP_DIR, "kill-switch.json");
@@ -38,13 +39,38 @@ async function writeKillSwitchState(state: KillSwitchState): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: POST to Railway backend with 5s timeout
+// ---------------------------------------------------------------------------
+
+async function postToBackend(endpoint: string): Promise<{ ok: boolean; source: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(`${PYTHON_API}${endpoint}`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      return { ok: true, source: RAILWAY_BACKEND_URL ? "railway" : "legacy-api" };
+    }
+    return { ok: false, source: "none" };
+  } catch {
+    clearTimeout(timeout);
+    return { ok: false, source: "none" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/trading/kill-switch -- return current persisted state
 // ---------------------------------------------------------------------------
 
 export async function GET() {
   try {
     const state = readKillSwitchState();
-    return NextResponse.json({ success: true, ...state });
+    return NextResponse.json({ success: true, ...state, source: "local" });
   } catch (error) {
     console.error("Kill switch GET error:", error);
     return NextResponse.json(
@@ -83,17 +109,12 @@ export async function POST(request: Request) {
     };
     await writeKillSwitchState(state);
 
-    // Also try to notify the Python backend
-    try {
-      const res = await fetch(`${PYTHON_API}/kill`, { method: "POST" });
-      if (res.ok) {
-        return NextResponse.json({ success: true, status: "killed", method: "api+file", ...state });
-      }
-    } catch {
-      // Python backend unreachable -- state is still persisted to file
-    }
+    // Also try to notify the Railway/Python backend
+    const backend = await postToBackend("/kill");
+    const method = backend.ok ? "api+file" : "file";
+    const source = backend.ok ? backend.source : "local";
 
-    return NextResponse.json({ success: true, status: "killed", method: "file", ...state });
+    return NextResponse.json({ success: true, status: "killed", method, source, ...state });
   }
 
   if (action === "resume") {
@@ -105,17 +126,12 @@ export async function POST(request: Request) {
     };
     await writeKillSwitchState(state);
 
-    // Also try to notify the Python backend
-    try {
-      const res = await fetch(`${PYTHON_API}/resume`, { method: "POST" });
-      if (res.ok) {
-        return NextResponse.json({ success: true, status: "resumed", method: "api+file", ...state });
-      }
-    } catch {
-      // Python backend unreachable -- state is still persisted to file
-    }
+    // Also try to notify the Railway/Python backend
+    const backend = await postToBackend("/resume");
+    const method = backend.ok ? "api+file" : "file";
+    const source = backend.ok ? backend.source : "local";
 
-    return NextResponse.json({ success: true, status: "resumed", method: "file", ...state });
+    return NextResponse.json({ success: true, status: "resumed", method, source, ...state });
   }
 
   return NextResponse.json({ error: "Invalid action" }, { status: 400 });

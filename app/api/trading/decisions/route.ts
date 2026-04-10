@@ -8,6 +8,8 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const RAILWAY_BACKEND_URL = process.env.RAILWAY_BACKEND_URL;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -635,11 +637,56 @@ function generateSeedDecisions(): DecisionsFile {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: fetch decisions from Railway backend
+// ---------------------------------------------------------------------------
+
+async function fetchDecisionsFromRailway(params: URLSearchParams): Promise<{
+  decisions: DecisionRecord[];
+  total: number;
+} | null> {
+  if (!RAILWAY_BACKEND_URL) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const qs = new URLSearchParams();
+    for (const [k, v] of params.entries()) {
+      qs.set(k, v);
+    }
+
+    const res = await fetch(`${RAILWAY_BACKEND_URL}/decisions?${qs.toString()}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return null;
+    return (await res.json()) as { decisions: DecisionRecord[]; total: number };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/trading/decisions
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
   try {
+    const url = new URL(request.url);
+
+    // --- Try Railway first ---
+    const railwayData = await fetchDecisionsFromRailway(url.searchParams);
+    if (railwayData && Array.isArray(railwayData.decisions) && railwayData.decisions.length > 0) {
+      return NextResponse.json({
+        decisions: railwayData.decisions,
+        total: railwayData.total,
+        source: "railway",
+      });
+    }
+
+    // --- Fallback: local seed data ---
     let file = readDecisionsFile();
 
     // Seed if empty
@@ -652,7 +699,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const url = new URL(request.url);
     const limit = Math.min(
       Math.max(parseInt(url.searchParams.get("limit") || "5", 10) || 5, 1),
       100,
@@ -687,7 +733,7 @@ export async function GET(request: NextRequest) {
     const total = filtered.length;
     const page = filtered.slice(offset, offset + limit);
 
-    return NextResponse.json({ decisions: page, total });
+    return NextResponse.json({ decisions: page, total, source: "local" });
   } catch (error) {
     console.error("Decisions GET error:", error);
     return NextResponse.json(

@@ -168,7 +168,7 @@ def setup_logging(config: dict, args: argparse.Namespace) -> None:
     console.setFormatter(fmt)
     root.addHandler(console)
 
-    # File handler
+    # File handler (primary log)
     try:
         file_handler = logging.FileHandler(log_file, mode="a")
         file_handler.setLevel(level)
@@ -176,6 +176,17 @@ def setup_logging(config: dict, args: argparse.Namespace) -> None:
         root.addHandler(file_handler)
     except (OSError, PermissionError) as e:
         logger.warning("Could not create log file %s: %s", log_file, e)
+
+    # Secondary log: paper_trading.log in app root for health_server.py /status endpoint
+    # The health server checks this file to report trading activity via HTTP
+    try:
+        paper_log = os.path.join(os.path.dirname(os.path.dirname(__file__)), "paper_trading.log")
+        paper_handler = logging.FileHandler(paper_log, mode="a")
+        paper_handler.setLevel(level)
+        paper_handler.setFormatter(fmt)
+        root.addHandler(paper_handler)
+    except (OSError, PermissionError) as e:
+        logger.warning("Could not create paper_trading.log: %s", e)
 
     # Reduce noise from third-party libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -642,6 +653,14 @@ async def _async_main(
                 )
         except Exception as e:
             logger.warning("Startup reconciliation failed: %s", e)
+
+    # --- 9a. Wire orchestrator into health_server for /decisions endpoint ---
+    try:
+        from health_server import set_orchestrator
+        set_orchestrator(orchestrator)
+        logger.info("Health server wired to orchestrator (in-memory decision log)")
+    except ImportError:
+        logger.debug("health_server not available, skipping orchestrator wiring")
 
     # --- 9. Wire up MCP server references (lazy import) ---
     try:

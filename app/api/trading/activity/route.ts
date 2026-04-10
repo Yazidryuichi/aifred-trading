@@ -5,6 +5,8 @@ import { lockedReadModifyWrite, atomicWriteFile, readJsonWithFallback } from "@/
 
 export const dynamic = "force-dynamic";
 
+const RAILWAY_BACKEND_URL = process.env.RAILWAY_BACKEND_URL;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -549,6 +551,86 @@ function generateSeedActivities(): ActivityEntry[] {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: fetch decisions from Railway and convert to activity entries
+// ---------------------------------------------------------------------------
+
+interface RailwayDecision {
+  id?: string;
+  timestamp?: string;
+  status?: string;
+  assetDecisions?: Array<{
+    asset?: string;
+    action?: string;
+    side?: string;
+    confidence?: number;
+    reasoning?: string;
+  }>;
+  chainOfThought?: string;
+}
+
+async function fetchRailwayActivities(limit: number): Promise<ActivityEntry[]> {
+  if (!RAILWAY_BACKEND_URL) return [];
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const res = await fetch(`${RAILWAY_BACKEND_URL}/decisions?limit=${limit}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as { decisions?: RailwayDecision[] };
+    if (!Array.isArray(data.decisions)) return [];
+
+    // Convert Railway decisions into ActivityEntry format
+    const entries: ActivityEntry[] = [];
+    for (const dec of data.decisions) {
+      if (!dec.timestamp) continue;
+
+      for (const ad of dec.assetDecisions ?? []) {
+        const action = ad.action?.toLowerCase();
+        let type: ActivityType;
+        let severity: Severity;
+
+        if (action === "buy") {
+          type = "trade_executed";
+          severity = "success";
+        } else if (action === "sell" || action === "close") {
+          type = "trade_closed";
+          severity = "info";
+        } else {
+          type = "signal_generated";
+          severity = "info";
+        }
+
+        entries.push({
+          id: `rail_${dec.id ?? Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: dec.timestamp,
+          type,
+          severity,
+          title: titleForType(type, { asset: ad.asset, side: action === "buy" ? "LONG" : "SHORT" }),
+          message: ad.reasoning || `${ad.action} ${ad.asset} (confidence: ${ad.confidence ?? 0}%)`,
+          details: {
+            asset: ad.asset,
+            side: action === "buy" ? "LONG" : "SHORT",
+            confidence: ad.confidence,
+            reasoning: ad.reasoning,
+          },
+        });
+      }
+    }
+
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/trading/activity — Get activity log (last 100 entries)
 // ---------------------------------------------------------------------------
 
@@ -566,10 +648,39 @@ export async function GET(request: NextRequest) {
     const limitParam = url.searchParams.get("limit");
     const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 100, 500) : 100;
 
+    // --- Merge Railway decisions as supplementary activity ---
+    const railwayActivities = await fetchRailwayActivities(50);
+    let source: "railway+local" | "local" = "local";
+
+    if (railwayActivities.length > 0) {
+      source = "railway+local";
+      // Deduplicate by checking timestamps within 1-second window
+      const existingTimestamps = new Set(
+        activities.map((a) => new Date(a.timestamp).getTime()),
+      );
+
+      for (const ra of railwayActivities) {
+        const ts = new Date(ra.timestamp).getTime();
+        // Only add if no existing entry within 1 second
+        const isDuplicate = [...existingTimestamps].some(
+          (et) => Math.abs(et - ts) < 1000,
+        );
+        if (!isDuplicate) {
+          activities.push(ra);
+          existingTimestamps.add(ts);
+        }
+      }
+
+      // Re-sort by timestamp after merge
+      activities.sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      );
+    }
+
     // Return the most recent entries
     const result = activities.slice(-limit).reverse(); // newest first
 
-    return NextResponse.json({ activities: result });
+    return NextResponse.json({ activities: result, source });
   } catch (error) {
     console.error("Activity GET error:", error);
     return NextResponse.json(
