@@ -117,6 +117,7 @@ class Position:
     entry_time: datetime = field(default_factory=datetime.utcnow)
     order_id: str = ""
     strategy: str = ""
+    signal_timestamp: Optional[datetime] = None  # when the opening signal was generated (for staleness exit)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

@@ -8,7 +8,8 @@ Factors with low IC/ICIR are noise — they should be downweighted.
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -17,7 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class FactorScorer:
-    """Score indicators by their actual predictive power using IC/ICIR."""
+    """Score indicators by their actual predictive power using IC/ICIR.
+
+    Also supports permutation-importance style pruning: factors whose
+    absolute IC falls below a configurable threshold are flagged as
+    "dead indicators" and can be excluded downstream. Pruned sets are
+    tracked per-asset with a last-pruned timestamp so pruning only runs
+    on the configured cadence (typically daily).
+    """
 
     def __init__(self, forward_periods: int = 8, window: int = 200, step: int = 24):
         """
@@ -30,6 +38,10 @@ class FactorScorer:
         self.window = window
         self.step = step
         self._scores: Dict[str, Dict[str, float]] = {}  # factor_name -> {ic, icir, win_rate}
+        # Pruning state
+        self._pruned: Set[str] = set()  # globally dead indicators
+        self._pruned_per_asset: Dict[str, Set[str]] = {}
+        self._last_prune_at: Optional[datetime] = None
 
     def score_factors(self, df: pd.DataFrame, factor_columns: List[str]) -> Dict[str, Dict[str, float]]:
         """Score each factor column against forward returns.
@@ -130,3 +142,66 @@ class FactorScorer:
         if weak:
             lines.append(f"Weak ({len(weak)}): {', '.join(weak[:5])}{'...' if len(weak)>5 else ''}")
         return " | ".join(lines)
+
+    # ------------------------------------------------------------------
+    # Permutation-importance pruning
+    # ------------------------------------------------------------------
+
+    def prune_weak_factors(
+        self,
+        asset: Optional[str] = None,
+        ic_threshold: float = 0.02,
+        icir_threshold: float = 0.0,
+    ) -> Set[str]:
+        """Mark factors with |IC| < threshold OR ICIR <= threshold as pruned.
+
+        A factor is considered "dead" if either its mean IC is near zero
+        (no linear predictive signal) OR its ICIR is non-positive
+        (unstable / noisy signal). Pruned factors are stored globally and
+        optionally per-asset.
+
+        Args:
+            asset: If given, pruned factors are also recorded for this asset.
+            ic_threshold: Minimum absolute IC to keep.
+            icir_threshold: Minimum ICIR to keep (default 0 = any positive ICIR).
+
+        Returns:
+            The set of pruned factor names from this call.
+        """
+        dead: Set[str] = set()
+        for name, scores in self._scores.items():
+            if abs(scores.get("ic", 0.0)) < ic_threshold:
+                dead.add(name)
+            elif scores.get("icir", 0.0) <= icir_threshold:
+                dead.add(name)
+
+        self._pruned |= dead
+        if asset is not None:
+            self._pruned_per_asset[asset] = set(dead)
+        self._last_prune_at = datetime.now(timezone.utc)
+
+        if dead:
+            logger.info(
+                "Factor pruning%s: dropped %d dead indicator(s): %s",
+                f" [{asset}]" if asset else "",
+                len(dead),
+                ", ".join(sorted(dead)[:10]) + ("..." if len(dead) > 10 else ""),
+            )
+        return dead
+
+    def is_pruned(self, factor_name: str, asset: Optional[str] = None) -> bool:
+        """Return True if the factor has been pruned globally or for the asset."""
+        if factor_name in self._pruned:
+            return True
+        if asset is not None:
+            return factor_name in self._pruned_per_asset.get(asset, set())
+        return False
+
+    def get_pruned_factors(self, asset: Optional[str] = None) -> List[str]:
+        """Return the current pruned set (global by default, per-asset if given)."""
+        if asset is not None:
+            return sorted(self._pruned_per_asset.get(asset, set()))
+        return sorted(self._pruned)
+
+    def last_prune_time(self) -> Optional[datetime]:
+        return self._last_prune_at

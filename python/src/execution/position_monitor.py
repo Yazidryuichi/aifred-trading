@@ -11,7 +11,7 @@ Runs every check_interval seconds and:
 import asyncio
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from src.utils.types import Position, TradeResult, TradeStatus
@@ -55,6 +55,12 @@ class PositionMonitor:
         monitor_cfg = config.get("position_monitor", {})
         self._trailing_stop_enabled = monitor_cfg.get("trailing_stop_enabled", False)
         self._trailing_stop_pct = monitor_cfg.get("trailing_stop_pct", 2.0) / 100.0
+
+        # Signal-staleness exit (close when the signal that opened this position is too old)
+        self._staleness_enabled = monitor_cfg.get("signal_staleness_enabled", True)
+        self._staleness_max_age_minutes = float(
+            monitor_cfg.get("signal_staleness_max_age_minutes", 240)
+        )
 
         # Control
         self._stop_event = asyncio.Event()
@@ -214,6 +220,20 @@ class PositionMonitor:
                     position.asset, current_price, position.take_profit,
                 )
                 return "take_profit_hit"
+
+        # Signal-staleness exit: catalyst may have evaporated
+        if self._staleness_enabled and position.signal_timestamp is not None:
+            sig_ts = position.signal_timestamp
+            # Normalize to aware UTC to avoid naive/aware subtraction errors
+            if sig_ts.tzinfo is None:
+                sig_ts = sig_ts.replace(tzinfo=timezone.utc)
+            age_minutes = (datetime.now(timezone.utc) - sig_ts).total_seconds() / 60.0
+            if age_minutes > self._staleness_max_age_minutes:
+                logger.info(
+                    "SIGNAL STALENESS EXIT: %s %s signal age=%.1fm > max=%.1fm",
+                    position.asset, position.side, age_minutes, self._staleness_max_age_minutes,
+                )
+                return "stale_signal"
 
         # Peak profit trailing stop
         current_pnl_pct = ((current_price - position.entry_price) / position.entry_price * 100

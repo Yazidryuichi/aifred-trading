@@ -71,6 +71,18 @@ sentiment:
     event: 0.20
   sentiment_velocity_weight: 0.15
 
+  # Exponential time-decay applied per component in the sentiment aggregator:
+  #   multiplier = exp(-ln(2) * hours_elapsed / half_life)
+  # A stale cached OI / funding / on-chain read contributes less than a fresh one.
+  decay_half_life_hours: 6.0
+
+  # Two-tier LLM cost gating. Haiku handles the pre-filter path (urgency < 5),
+  # Sonnet handles the final deep-analysis path (urgency >= 5). Typical savings
+  # vs single-model Sonnet: ~80% on LLM spend with negligible signal loss.
+  llm_models:
+    fast: "claude-haiku-4-5-20251001"
+    deep: "claude-sonnet-4-5-20250929"
+
 risk:
   max_position_pct: 3.0
   max_risk_per_trade_pct: 1.5
@@ -162,6 +174,26 @@ safety:
   max_exposure_pct: 30.0
   max_positions: 5
   kill_switch_enabled: true
+
+position_monitor:
+  # Trailing stop (existing behavior — disabled by default)
+  trailing_stop_enabled: false
+  trailing_stop_pct: 2.0
+
+  # Signal-staleness auto-exit: close positions when the signal that opened
+  # them is older than this. Protects against holding after the original
+  # catalyst has evaporated. Set signal_staleness_enabled: false to disable.
+  signal_staleness_enabled: true
+  signal_staleness_max_age_minutes: 240  # 4 hours
+
+# Permutation-importance pruning: drop indicators whose |IC| falls below
+# `ic_threshold` or whose ICIR is non-positive. Runs on the configured
+# cadence (default daily) after the existing factor-scoring pass.
+feature_pruning:
+  enabled: true
+  ic_threshold: 0.02
+  icir_threshold: 0.0
+  check_frequency_hours: 24
 
 execution:
   default_order_type: "limit"

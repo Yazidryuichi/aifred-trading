@@ -480,6 +480,7 @@ class ExecutionAgent:
             take_profit=proposal.take_profit,
             order_id=result.order_id,
             strategy=proposal.signal.source if proposal.signal else "",
+            signal_timestamp=proposal.signal.timestamp if proposal.signal else None,
         )
         self._positions[proposal.asset] = pos
         if self._paper_mode and self._paper_trader:

@@ -159,7 +159,12 @@ class LLMAnalyzer:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        # Two-tier cost gating:
+        #   - `model`    = fast pre-filter path (Haiku, ~$0.25/M input)
+        #   - `deep_model` = final-decision path (Sonnet, ~$3/M input)
+        # An item only reaches the deep path when its urgency hint meets
+        # _DEEP_ANALYSIS_URGENCY_THRESHOLD. Everything else runs on Haiku.
+        model: str = "claude-haiku-4-5-20251001",
         deep_model: str = "claude-sonnet-4-5-20250929",
         max_tokens: int = 512,
         requests_per_minute: int = 30,
@@ -178,6 +183,10 @@ class LLMAnalyzer:
         # Response cache to avoid duplicate API calls on similar texts
         self._cache: Dict[str, SentimentScore] = {}
         self._cache_ttl = 300.0  # 5 minutes
+
+        # Cost-gating telemetry
+        self._fast_calls = 0
+        self._deep_calls = 0
 
     def set_market_regime(self, regime: str) -> None:
         """Update the current market regime context.
@@ -271,10 +280,12 @@ class LLMAnalyzer:
                 )
                 model = self._deep_model
                 max_tokens = self._max_tokens
+                self._deep_calls += 1
             else:
                 prompt = _FAST_PROMPT.format(asset=asset, text=text[:2000])
                 model = self._model
                 max_tokens = 256
+                self._fast_calls += 1
 
             response = client.messages.create(
                 model=model,
@@ -464,3 +475,28 @@ class LLMAnalyzer:
     def clear_cache(self) -> None:
         """Clear the response cache."""
         self._cache.clear()
+
+    def get_cost_stats(self) -> Dict[str, Any]:
+        """Return two-tier cost-gating telemetry.
+
+        `fast_calls` use the cheap model (Haiku, ~$0.25/M input); `deep_calls`
+        use the premium model (Sonnet, ~$3/M input). The savings estimate
+        assumes an average 500-token prompt per call.
+        """
+        total = self._fast_calls + self._deep_calls
+        fast_pct = (self._fast_calls / total) if total > 0 else 0.0
+        # Rough savings: each fast call avoids the Sonnet premium.
+        # Sonnet input ≈ 12× Haiku input per token; assume 500 tokens/call.
+        per_call_tokens = 500
+        haiku_cost = 0.25 / 1_000_000 * per_call_tokens
+        sonnet_cost = 3.0 / 1_000_000 * per_call_tokens
+        savings = self._fast_calls * (sonnet_cost - haiku_cost)
+        return {
+            "fast_model": self._model,
+            "deep_model": self._deep_model,
+            "fast_calls": self._fast_calls,
+            "deep_calls": self._deep_calls,
+            "fast_share": round(fast_pct, 3),
+            "estimated_savings_usd": round(savings, 4),
+            "urgency_threshold": _DEEP_ANALYSIS_URGENCY_THRESHOLD,
+        }

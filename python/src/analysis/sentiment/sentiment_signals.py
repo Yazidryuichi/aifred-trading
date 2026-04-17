@@ -63,6 +63,12 @@ _CONTRARIAN_F_G_GREED_THRESHOLD = 90
 _VELOCITY_SPIKE_THRESHOLD = 0.3   # rapid sentiment shift
 _VELOCITY_COLLAPSE_THRESHOLD = -0.3
 
+# Time-decay: exponential half-life for aging sentiment components. An older
+# component (stale OI/funding/on-chain read, cached LLM result) contributes
+# less weight than a fresh one. decay_multiplier = exp(-ln(2) * hours / half_life).
+_DEFAULT_DECAY_HALF_LIFE_HOURS = 6.0
+_DECAY_LN2 = 0.6931471805599453
+
 
 def _score_to_direction(score: float) -> Direction:
     """Map a [-1, 1] sentiment score to a Direction enum."""
@@ -100,10 +106,18 @@ class SentimentAnalysisAgent:
         fear_greed_weights: Optional[Dict[str, float]] = None,
         subreddits: Optional[List[str]] = None,
         market_regime: str = "neutral",
+        decay_half_life_hours: float = _DEFAULT_DECAY_HALF_LIFE_HOURS,
+        llm_fast_model: Optional[str] = None,
+        llm_deep_model: Optional[str] = None,
     ):
         self._source_weights = source_weights or _DEFAULT_SOURCE_WEIGHTS.copy()
         self._finbert = FinBERTModel()
-        self._llm = LLMAnalyzer(market_regime=market_regime)
+        llm_kwargs: Dict[str, Any] = {"market_regime": market_regime}
+        if llm_fast_model:
+            llm_kwargs["model"] = llm_fast_model
+        if llm_deep_model:
+            llm_kwargs["deep_model"] = llm_deep_model
+        self._llm = LLMAnalyzer(**llm_kwargs)
         self._social = SocialAggregator(subreddits=subreddits)
         self._event_detector = EventDetector()
         self._fear_greed = FearGreedCalculator(
@@ -112,6 +126,7 @@ class SentimentAnalysisAgent:
         self._reliability = SourceReliabilityTracker()
         self._preprocessor = TextPreprocessor()
         self._market_regime = market_regime
+        self._decay_half_life_hours = max(0.1, float(decay_half_life_hours))
 
         # Signal history for velocity tracking
         self._signal_history: Dict[str, deque] = {}
@@ -426,11 +441,21 @@ class SentimentAnalysisAgent:
         weighted_score = 0.0
         weighted_confidence = 0.0
         directions: Dict[str, str] = {}
+        decays: Dict[str, float] = {}
 
+        now = datetime.utcnow()
         for source_name, sentiment in components.items():
             base_weight = self._source_weights.get(source_name, 0.1)
             reliability_mult = self._reliability.get_weight(source_name)
-            effective_weight = base_weight * reliability_mult * sentiment.confidence
+
+            # Time-decay: older components contribute less. Fresh components
+            # (<< half-life old) stay near full strength; stale ones decay
+            # exponentially toward zero.
+            age_hours = max(0.0, (now - sentiment.timestamp).total_seconds() / 3600.0)
+            decay_mult = math.exp(-_DECAY_LN2 * age_hours / self._decay_half_life_hours)
+            decays[source_name] = decay_mult
+
+            effective_weight = base_weight * reliability_mult * sentiment.confidence * decay_mult
 
             weighted_score += sentiment.score * effective_weight
             weighted_confidence += sentiment.confidence * effective_weight
@@ -481,6 +506,8 @@ class SentimentAnalysisAgent:
             "neutral_sources": neutral_count,
             "total_sources": total_sources,
             "per_source_direction": directions,
+            "decay_half_life_hours": self._decay_half_life_hours,
+            "per_source_decay": {k: round(v, 3) for k, v in decays.items()},
         }
 
         return final_score, final_confidence, consensus_info

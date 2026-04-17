@@ -228,9 +228,15 @@ class Orchestrator:
         self._macro_signal: Optional[MacroSignal] = None
         self._whale_detector: Optional[WhaleDetector] = None
 
-        # Factor scoring (IC/ICIR)
+        # Factor scoring (IC/ICIR) + permutation-importance pruning
         self._factor_scorer = FactorScorer()
         self._factor_scores: Dict[str, Dict] = {}  # asset -> factor scores
+        prune_cfg = config.get("feature_pruning", {}) or {}
+        self._pruning_enabled = bool(prune_cfg.get("enabled", True))
+        self._pruning_ic_threshold = float(prune_cfg.get("ic_threshold", 0.02))
+        self._pruning_icir_threshold = float(prune_cfg.get("icir_threshold", 0.0))
+        self._pruning_frequency_hours = float(prune_cfg.get("check_frequency_hours", 24))
+        self._last_prune_time: Optional[datetime] = None
 
         # Signal percentile calibration history (per-asset)
         self._signal_history: Dict[str, deque] = {}
@@ -333,8 +339,14 @@ class Orchestrator:
         try:
             sentiment_cfg = self.config.get("sentiment", {})
             social_cfg = sentiment_cfg.get("social", {})
+            llm_models_cfg = sentiment_cfg.get("llm_models", {}) or {}
             self._sentiment_agent = SentimentAnalysisAgent(
                 subreddits=social_cfg.get("reddit_subreddits"),
+                decay_half_life_hours=float(
+                    sentiment_cfg.get("decay_half_life_hours", 6.0)
+                ),
+                llm_fast_model=llm_models_cfg.get("fast"),
+                llm_deep_model=llm_models_cfg.get("deep"),
             )
             status["sentiment"] = True
             logger.info("Sentiment Analysis Agent initialized")
@@ -1225,6 +1237,27 @@ class Orchestrator:
                                 n: s for n, s in self._factor_scorer.get_top_factors(5)
                             }
                             ctx["weak_factors"] = self._factor_scorer.get_weak_factors()
+
+                            # Permutation-importance pruning (daily cadence)
+                            if self._pruning_enabled:
+                                now_utc = datetime.utcnow()
+                                due = (
+                                    self._last_prune_time is None
+                                    or (now_utc - self._last_prune_time).total_seconds()
+                                    >= self._pruning_frequency_hours * 3600.0
+                                )
+                                if due:
+                                    pruned = self._factor_scorer.prune_weak_factors(
+                                        asset=asset,
+                                        ic_threshold=self._pruning_ic_threshold,
+                                        icir_threshold=self._pruning_icir_threshold,
+                                    )
+                                    self._last_prune_time = now_utc
+                                    ctx["pruned_factors"] = sorted(pruned)
+                                    ctx["pruned_count"] = len(pruned)
+                                    ctx["kept_factor_count"] = max(
+                                        0, len(scores) - len(pruned)
+                                    )
             except Exception as e:
                 logger.debug("Factor scoring failed for %s: %s", asset, e)
 
