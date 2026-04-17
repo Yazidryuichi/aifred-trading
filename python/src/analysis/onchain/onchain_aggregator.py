@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 from src.analysis.onchain.defi_llama import DeFiLlamaClient
 from src.analysis.onchain.etherscan_onchain import EtherscanClient
+from src.analysis.onchain.hyperliquid_market_data import HyperliquidMarketData
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,14 @@ logger = logging.getLogger(__name__)
 # Component weights for composite confidence
 # ---------------------------------------------------------------------------
 _COMPONENT_WEIGHTS = {
-    "tvl_trend": 0.25,
-    "stablecoin_flow": 0.20,
-    "whale_activity": 0.20,
-    "exchange_flow": 0.15,
-    "gas_activity": 0.10,
-    "dex_volume": 0.10,
+    "tvl_trend": 0.20,
+    "stablecoin_flow": 0.15,
+    "whale_activity": 0.15,
+    "exchange_flow": 0.10,
+    "gas_activity": 0.08,
+    "dex_volume": 0.07,
+    "funding_rate": 0.15,
+    "oi_trend": 0.10,
 }
 
 
@@ -73,6 +76,7 @@ class OnChainAggregator:
     ):
         self._llama = defi_llama_client or DeFiLlamaClient()
         self._etherscan = etherscan_client or EtherscanClient(api_key=etherscan_api_key)
+        self._hyperliquid = HyperliquidMarketData()
 
     async def close(self) -> None:
         """Close all underlying HTTP sessions."""
@@ -126,6 +130,9 @@ class OnChainAggregator:
                     "On-chain %s fetch failed: %s", name, results[i]
                 )
 
+        # --- Fetch Hyperliquid funding/OI (sync, runs in thread) ---
+        funding_data, oi_delta = self._fetch_hyperliquid_data(asset)
+
         # --- Derive component signals ---
         tvl_trend, tvl_conf, tvl_meta = self._interpret_tvl(tvl_data)
         stable_dir, stable_conf, stable_meta = self._interpret_stablecoins(stable_data)
@@ -133,6 +140,8 @@ class OnChainAggregator:
         flow_dir, flow_conf, flow_meta = self._interpret_exchange_flow(flow_data)
         gas_level, gas_conf, gas_meta = self._interpret_gas(gas_data)
         dex_trend, dex_conf, dex_meta = self._interpret_dex_volume(dex_data)
+        funding_dir, funding_conf, funding_meta = self._interpret_funding_rate(funding_data)
+        oi_dir, oi_conf, oi_meta = self._interpret_oi_trend(oi_delta)
 
         # --- Derive composite DeFi sentiment ---
         defi_sentiment = self._compute_defi_sentiment(
@@ -150,6 +159,8 @@ class OnChainAggregator:
             "exchange_flow": flow_conf,
             "gas_activity": gas_conf,
             "dex_volume": dex_conf,
+            "funding_rate": funding_conf,
+            "oi_trend": oi_conf,
         })
 
         metadata = {
@@ -159,6 +170,8 @@ class OnChainAggregator:
             "exchange_flow": flow_meta,
             "gas": gas_meta,
             "dex": dex_meta,
+            "funding_rate": funding_meta,
+            "oi_delta": oi_meta,
             "component_confidences": {
                 "tvl": tvl_conf,
                 "stablecoins": stable_conf,
@@ -166,6 +179,8 @@ class OnChainAggregator:
                 "exchange_flow": flow_conf,
                 "gas": gas_conf,
                 "dex": dex_conf,
+                "funding_rate": funding_conf,
+                "oi_trend": oi_conf,
             },
         }
 
@@ -180,9 +195,14 @@ class OnChainAggregator:
         )
 
         logger.info(
-            "OnChainSignal: asset=%s tvl=%s whales=%s flow=%s sentiment=%s conf=%.2f",
-            asset, tvl_trend, whale_class, flow_dir, defi_sentiment, confidence,
+            "OnChainSignal: asset=%s tvl=%s whales=%s flow=%s sentiment=%s "
+            "funding=%s oi=%s conf=%.2f",
+            asset, tvl_trend, whale_class, flow_dir, defi_sentiment,
+            funding_dir, oi_dir, confidence,
         )
+
+        # Record OI snapshot for delta tracking
+        self._hyperliquid.record_snapshot()
 
         return signal
 
@@ -237,8 +257,95 @@ class OnChainAggregator:
         return {"level": level, **meta}
 
     # ------------------------------------------------------------------
+    # Hyperliquid data fetch
+    # ------------------------------------------------------------------
+
+    def _fetch_hyperliquid_data(
+        self, asset: str
+    ) -> tuple[Dict[str, Any], Dict[str, float]]:
+        """Fetch funding rate and OI delta from Hyperliquid.
+
+        Returns:
+            (funding_data, oi_delta) -- funding_data is the per-symbol dict
+            from HyperliquidMarketData, oi_delta is the percentage change dict.
+            Returns ({}, {}) on failure.
+        """
+        try:
+            funding_data = self._hyperliquid.fetch_funding_and_oi([asset])
+            sym = asset.split("/")[0].upper()
+            asset_data = funding_data.get(sym, {})
+            oi_delta = self._hyperliquid.get_oi_delta(asset)
+            return asset_data, oi_delta
+        except Exception as exc:
+            logger.warning("Hyperliquid data fetch failed: %s", exc)
+            return {}, {}
+
+    # ------------------------------------------------------------------
     # Signal interpretation
     # ------------------------------------------------------------------
+
+    def _interpret_funding_rate(
+        self, data: Dict[str, Any]
+    ) -> tuple[str, float, Dict[str, Any]]:
+        """Interpret funding rate into a directional signal.
+
+        rate > 0.03% (0.0003) -> bearish (longs overcrowded)
+        rate < -0.02% (-0.0002) -> bullish (shorts overcrowded)
+        otherwise -> neutral
+        """
+        if not data:
+            return "neutral", 0.0, {"status": "unavailable"}
+
+        rate = data.get("funding_rate", 0.0)
+
+        if rate > 0.0003:
+            direction = "bearish"
+            conf = min(0.9, 0.5 + abs(rate) * 500)
+        elif rate < -0.0002:
+            direction = "bullish"
+            conf = min(0.9, 0.5 + abs(rate) * 500)
+        else:
+            direction = "neutral"
+            conf = 0.3
+
+        meta = {
+            "funding_rate": rate,
+            "funding_rate_pct": round(rate * 100, 4),
+            "signal": direction,
+        }
+        return direction, conf, meta
+
+    def _interpret_oi_trend(
+        self, oi_delta: Dict[str, float]
+    ) -> tuple[str, float, Dict[str, Any]]:
+        """Interpret OI delta into a trend signal.
+
+        OI rising >5% in 4h -> trending (momentum building)
+        OI dropping >5% in 4h -> deleveraging (caution)
+        otherwise -> stable
+        """
+        if not oi_delta:
+            return "stable", 0.0, {"status": "unavailable"}
+
+        change_4h = oi_delta.get("4h")
+        if change_4h is None:
+            return "stable", 0.0, {"status": "insufficient_data", **oi_delta}
+
+        if change_4h > 5.0:
+            direction = "trending"
+            conf = min(0.9, 0.5 + change_4h / 50.0)
+        elif change_4h < -5.0:
+            direction = "deleveraging"
+            conf = min(0.9, 0.5 + abs(change_4h) / 50.0)
+        else:
+            direction = "stable"
+            conf = 0.4
+
+        meta = {
+            "oi_changes": oi_delta,
+            "signal": direction,
+        }
+        return direction, conf, meta
 
     def _interpret_tvl(
         self, data: Optional[Dict]

@@ -131,15 +131,15 @@ risk:
       off_multiplier: 0.85
 
 meta_reasoning:
-  enabled: false  # disabled by default, enable when API key is set
-  provider: "anthropic"  # "anthropic" or "openai"
+  enabled: true  # enabled 2026-04-15 — ANTHROPIC_API_KEY is set
+  provider: "anthropic"  # "anthropic", "openai", or "deepseek"
   model: "claude-sonnet-4-20250514"
   max_tokens: 1024
   temperature: 0.3
   timeout_seconds: 30
   max_confidence_boost: 10.0
   max_confidence_penalty: 20.0
-  min_trigger_confidence: 60.0  # only call LLM if fused confidence exceeds this
+  min_trigger_confidence: 35.0  # lowered 2026-04-15 to engage on weak technical-only signals
   # Use in signal fusion: if enabled, meta-reasoning adjusts confidence after fusion
   apply_to_fusion: true
 

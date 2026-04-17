@@ -96,8 +96,9 @@ def train_asset(agent: TechnicalAnalysisAgent, symbol: str, epochs: int = 50) ->
     result = agent.train(symbol, df, epochs=epochs, walk_forward=False)
     elapsed = time.time() - t0
 
-    logger.info("Training for %s completed in %.1fs", symbol, elapsed)
-    logger.info("Result: %s", {k: v for k, v in result.items() if k != "fold_details"})
+    # Save checkpoints IMMEDIATELY after training (before any metrics code that might crash)
+    agent.save_models(prefix="latest")
+    logger.info("Training for %s completed in %.1fs — checkpoints saved", symbol, elapsed)
 
     return result
 

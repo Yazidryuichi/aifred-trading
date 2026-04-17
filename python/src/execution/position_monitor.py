@@ -215,6 +215,29 @@ class PositionMonitor:
                 )
                 return "take_profit_hit"
 
+        # Peak profit trailing stop
+        current_pnl_pct = ((current_price - position.entry_price) / position.entry_price * 100
+                           if position.side == "LONG"
+                           else (position.entry_price - current_price) / position.entry_price * 100)
+
+        # Track peak
+        if not hasattr(position, '_peak_pnl_pct') or position._peak_pnl_pct is None:
+            position._peak_pnl_pct = current_pnl_pct
+        elif current_pnl_pct > position._peak_pnl_pct:
+            position._peak_pnl_pct = current_pnl_pct
+
+        PEAK_PROFIT_THRESHOLD = 5.0    # only activate after 5% unrealized profit
+        PEAK_DRAWDOWN_TRIGGER = 0.40   # close if profit drops 40% from peak
+
+        if (position._peak_pnl_pct >= PEAK_PROFIT_THRESHOLD
+                and current_pnl_pct < position._peak_pnl_pct * (1 - PEAK_DRAWDOWN_TRIGGER)):
+            logger.warning(
+                "PEAK PROFIT STOP: %s peak=%.1f%% current=%.1f%% (%.1f%% drawdown from peak)",
+                position.asset, position._peak_pnl_pct, current_pnl_pct,
+                (1 - current_pnl_pct / position._peak_pnl_pct) * 100
+            )
+            return "peak_profit_stop"
+
         # Update trailing stop if applicable
         if self._trailing_stop_enabled:
             self._update_trailing_stop(position, current_price)

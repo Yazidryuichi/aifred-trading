@@ -296,21 +296,24 @@ class WalkForwardTrainer:
                             cnn_preds = (cnn_probs[:, 1] > 0.5).astype(int)
                             metrics["cnn_accuracy"] = float(np.mean(cnn_preds == test_labels))
 
-        # ── Train Ensemble Meta-Learner ───────────────────────────
-        if (
-            self.lstm_model.is_trained
-            and self.transformer_model.is_trained
-            and len(X_test_seq) > 30
-        ):
-            meta_X, meta_y = self._build_meta_training_data(
-                X_train_seq, y_train_seq, df_feat, train_start, train_end, lookback
-            )
-            if len(meta_X) > 50:
-                self.ensemble.train(meta_X, meta_y)
-                metrics["ensemble_trained"] = True
-
-        # Save checkpoints
+        # Save checkpoints FIRST (before ensemble which can segfault on NumPy 2.x)
         self._save_checkpoints(fold_idx)
+
+        # ── Train Ensemble Meta-Learner ───────────────────────────
+        try:
+            if (
+                self.lstm_model.is_trained
+                and self.transformer_model.is_trained
+                and len(X_test_seq) > 30
+            ):
+                meta_X, meta_y = self._build_meta_training_data(
+                    X_train_seq, y_train_seq, df_feat, train_start, train_end, lookback
+                )
+                if len(meta_X) > 50:
+                    self.ensemble.train(meta_X, meta_y)
+                    metrics["ensemble_trained"] = True
+        except Exception as e:
+            logger.warning("Ensemble meta-learner training failed: %s", e)
 
         return metrics
 
@@ -370,9 +373,10 @@ class WalkForwardTrainer:
         return np.array([]), np.array([])
 
     def _save_checkpoints(self, fold_idx: int) -> None:
-        """Save model checkpoints for current fold."""
+        """Save model checkpoints for current fold AND as latest."""
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         try:
+            # Save fold-specific checkpoints
             self.lstm_model.save(
                 os.path.join(self.checkpoint_dir, f"lstm_fold{fold_idx}.pt")
             )
@@ -382,6 +386,17 @@ class WalkForwardTrainer:
             self.pattern_cnn.save(
                 os.path.join(self.checkpoint_dir, f"cnn_fold{fold_idx}.pt")
             )
+            # Also save as *_latest.pt so the bot picks them up on restart
+            self.lstm_model.save(
+                os.path.join(self.checkpoint_dir, "lstm_latest.pt")
+            )
+            self.transformer_model.save(
+                os.path.join(self.checkpoint_dir, "transformer_latest.pt")
+            )
+            self.pattern_cnn.save(
+                os.path.join(self.checkpoint_dir, "cnn_latest.pt")
+            )
+            logger.info("Checkpoints saved (fold %d + latest)", fold_idx)
         except Exception as e:
             logger.warning(f"Checkpoint save failed: {e}")
 

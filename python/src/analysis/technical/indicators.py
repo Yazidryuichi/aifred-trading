@@ -114,6 +114,12 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Volume profile approximation (POC - Point of Control)
     df["volume_profile_poc"] = _volume_profile_poc(df, lookback=50)
 
+    # ── Bollinger Band Squeeze ────────────────────────────────────
+    df["bb_squeeze"] = detect_bb_squeeze(df)
+    # Track previous squeeze state for release detection
+    df["bb_squeeze_prev"] = df["bb_squeeze"].shift(1).fillna(False)
+    df["bb_squeeze_release"] = df["bb_squeeze_prev"] & ~df["bb_squeeze"]
+
     # ── ICT Indicators ────────────────────────────────────────────
     df["order_block"] = detect_order_blocks(df)
     df["fair_value_gap"] = detect_fair_value_gaps(df)
@@ -546,6 +552,49 @@ def detect_rsi_divergence(
             result.iloc[i] = -1.0
 
     return result
+
+
+def detect_bb_squeeze(
+    df: pd.DataFrame,
+    bb_period: int = 20,
+    bb_std: float = 2.0,
+    kc_period: int = 20,
+    kc_mult: float = 1.5,
+) -> pd.Series:
+    """Detect Bollinger Band squeeze (BB inside Keltner Channels).
+
+    Squeeze = volatility compression. When it releases, expect big move.
+
+    Args:
+        df: DataFrame with 'close', 'high', 'low' columns and optionally 'atr'.
+        bb_period: Bollinger Band lookback period.
+        bb_std: Bollinger Band standard deviation multiplier.
+        kc_period: Keltner Channel lookback period.
+        kc_mult: Keltner Channel ATR multiplier.
+
+    Returns:
+        Series of bool (True = in squeeze).
+    """
+    close = df["close"]
+
+    # Bollinger Bands
+    bb_mid = close.rolling(bb_period).mean()
+    bb_std_val = close.rolling(bb_period).std()
+    bb_upper = bb_mid + bb_std * bb_std_val
+    bb_lower = bb_mid - bb_std * bb_std_val
+
+    # Keltner Channels (EMA + ATR)
+    kc_mid = close.ewm(span=kc_period).mean()
+    if "atr" in df.columns:
+        atr = df["atr"]
+    else:
+        atr = (df["high"] - df["low"]).rolling(kc_period).mean()
+    kc_upper = kc_mid + kc_mult * atr
+    kc_lower = kc_mid - kc_mult * atr
+
+    # Squeeze: BB is INSIDE KC
+    squeeze = (bb_lower > kc_lower) & (bb_upper < kc_upper)
+    return squeeze
 
 
 def is_in_kill_zone(df: pd.DataFrame) -> pd.Series:

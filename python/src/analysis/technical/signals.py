@@ -55,8 +55,8 @@ except ImportError as _ml_err:
 logger = logging.getLogger(__name__)
 
 # Signal gating constants
-MIN_CONFIDENCE_THRESHOLD = 75.0
-MIN_CONFLUENCES = 4
+MIN_CONFIDENCE_THRESHOLD = 60.0
+MIN_CONFLUENCES = 3
 
 # Default config path
 DEFAULT_CONFIG_PATH = "src/config/default.yaml"
@@ -371,6 +371,25 @@ class TechnicalAnalysisAgent:
             "adx": indicator_feats.get("adx"),
             "atr": float(df["atr"].iloc[-1]) if "atr" in df.columns else None,
         }
+
+        # ── Bollinger Band Squeeze detection ──────────────────────
+        bb_squeeze_active = False
+        bb_squeeze_release = False
+        if "bb_squeeze" in df.columns:
+            bb_squeeze_active = bool(df["bb_squeeze"].iloc[-1])
+        if "bb_squeeze_release" in df.columns:
+            bb_squeeze_release = bool(df["bb_squeeze_release"].iloc[-1])
+
+        ensemble_signal.metadata["bb_squeeze"] = bb_squeeze_active
+        ensemble_signal.metadata["bb_squeeze_release"] = bb_squeeze_release
+
+        # Boost confidence by 10% when squeeze just released (breakout expected)
+        if bb_squeeze_release and ensemble_signal.direction != Direction.HOLD:
+            ensemble_signal.confidence *= 1.10
+            logger.info(
+                "[%s] BB squeeze release detected — confidence boosted to %.1f%%",
+                asset, ensemble_signal.confidence,
+            )
 
         # ── Rule-based fallback when ML models are untrained ──────
         # If ensemble confidence is very low (<10%), the models are untrained.

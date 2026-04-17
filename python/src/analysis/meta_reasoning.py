@@ -30,6 +30,7 @@ Output is a structured JSON decision (inspired by NoFx's pattern):
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -103,7 +104,7 @@ class MetaReasoningAgent:
 
         self._enabled = meta_cfg.get("enabled", True)
         self._model = meta_cfg.get("model", "claude-sonnet-4-20250514")
-        self._provider = meta_cfg.get("provider", "anthropic")  # "anthropic" or "openai"
+        self._provider = meta_cfg.get("provider", "anthropic")  # "anthropic", "openai", or "deepseek"
         self._max_tokens = meta_cfg.get("max_tokens", 1024)
         self._temperature = meta_cfg.get("temperature", 0.3)
         self._timeout = meta_cfg.get("timeout_seconds", 30)
@@ -149,9 +150,12 @@ class MetaReasoningAgent:
 
     def _init_client(self):
         """Initialize the LLM API client."""
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if self._provider == "openai":
+        if self._provider == "deepseek":
+            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        elif self._provider == "openai":
             api_key = os.environ.get("OPENAI_API_KEY", "")
+        else:
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
         if not api_key:
             api_key = self._config.get("meta_reasoning", {}).get("api_key", "")
@@ -187,6 +191,20 @@ class MetaReasoningAgent:
                     "openai package not installed, meta-reasoning disabled"
                 )
                 self._enabled = False
+        elif self._provider == "deepseek":
+            try:
+                from openai import OpenAI
+                self._client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+                self._provider = "openai"  # uses openai-compatible format
+                logger.info(
+                    "Meta-reasoning: DeepSeek client initialized (model=%s)",
+                    self._model,
+                )
+            except ImportError:
+                logger.warning(
+                    "openai package not installed for DeepSeek, meta-reasoning disabled"
+                )
+                self._enabled = False
         else:
             logger.error("Unknown meta-reasoning provider: %s", self._provider)
             self._enabled = False
@@ -211,6 +229,14 @@ class MetaReasoningAgent:
         prompt = f"""You are a senior quantitative trader reviewing a trading signal from an AI ensemble system.
 Your job is to evaluate whether this signal should be acted upon, considering factors the models might miss.
 
+You must analyze this signal from THREE perspectives before making your decision:
+
+1. BULL CASE: What supports this trade? List 2-3 strongest arguments for entering.
+2. BEAR CASE: What argues against this trade? List 2-3 risks or warning signs.
+3. RISK ASSESSMENT: Given both cases, what is the probability-weighted expected outcome?
+
+Only recommend action if the Bull Case materially outweighs the Bear Case AND the Risk Assessment supports it. If the cases are roughly balanced, recommend HOLD.
+
 ## Current Signal
 - Symbol: {symbol}
 - Direction: {fused_signal.direction.value}
@@ -225,6 +251,9 @@ Your job is to evaluate whether this signal should be acted upon, considering fa
 
 ## Current Market Data
 {json.dumps(indicators, indent=2, default=str)}
+
+## Leverage Conditions
+{self._format_leverage_conditions(indicators)}
 
 ## Portfolio State
 - Total Value: ${portfolio_value:,.2f}
@@ -242,11 +271,20 @@ Analyze the above and respond with a JSON decision. Consider:
 4. What is your confidence level, and should it be higher or lower than the model's {fused_signal.confidence:.1f}%?
 5. Any concerns about timing, market conditions, or data quality?
 
+HYSTERESIS POLICY:
+- Require STRONGER evidence to REVERSE a position than to HOLD one.
+- If the current signal agrees with an existing position direction, lean toward holding.
+- Minimum 3 scan cycles after a direction change before recommending another flip.
+- Avoid churn: flipping between LONG and SHORT repeatedly destroys capital through fees.
+- If confidence is borderline (within 5% of threshold), prefer HOLD over action.
+
 Respond ONLY with valid JSON in this exact format:
 {{
     "action": "BUY" or "SELL" or "HOLD" or "SKIP",
     "adjusted_confidence": <number 0-100>,
     "size_adjustment": <number 0.5-1.5>,
+    "bull_case": "2-3 sentence summary of arguments for",
+    "bear_case": "2-3 sentence summary of arguments against",
     "reasoning": "<2-3 sentences explaining your decision>",
     "risk_notes": "<key risk factors>",
     "concerns": ["<concern 1>", "<concern 2>"],
@@ -279,6 +317,63 @@ Respond ONLY with valid JSON in this exact format:
                 f"current=${p.current_price:,.2f}, P&L=${pnl:,.2f}"
             )
         return "\n".join(lines)
+
+    def _format_leverage_conditions(self, indicators: Dict[str, Any]) -> str:
+        """Format leverage/derivatives data for the prompt.
+
+        Expects indicators to optionally contain:
+        - funding_rate: float (per-8h rate, e.g. 0.0001)
+        - oi_changes: dict with "1h", "4h", "24h" percentage changes
+        """
+        funding_rate = indicators.get("funding_rate")
+        oi_changes = indicators.get("oi_changes", {})
+
+        if funding_rate is None and not oi_changes:
+            return "- Data unavailable"
+
+        lines = []
+
+        if funding_rate is not None:
+            rate_pct = funding_rate * 100
+            lines.append(f"- Funding rate: {rate_pct:.4f}% per 8h")
+        else:
+            lines.append("- Funding rate: unavailable")
+
+        oi_4h = oi_changes.get("4h")
+        if oi_4h is not None:
+            lines.append(f"- OI change (4h): {oi_4h:+.2f}%")
+        else:
+            lines.append("- OI change (4h): unavailable")
+
+        # Derive interpretation
+        if funding_rate is not None and oi_4h is not None:
+            interpretation = self._interpret_leverage_signal(funding_rate, oi_4h)
+            lines.append(f"- Signal: {interpretation}")
+        elif funding_rate is not None:
+            if funding_rate > 0.0003:
+                lines.append("- Signal: High funding -- longs overcrowded, bearish pressure")
+            elif funding_rate < -0.0002:
+                lines.append("- Signal: Negative funding -- shorts overcrowded, bullish pressure")
+            else:
+                lines.append("- Signal: Neutral funding")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _interpret_leverage_signal(funding_rate: float, oi_4h_change: float) -> str:
+        """Derive a human-readable leverage signal interpretation."""
+        if funding_rate > 0.0003 and oi_4h_change > 5.0:
+            return "Overheated -- high funding + rising OI, potential squeeze risk for longs"
+        elif funding_rate > 0.0003 and oi_4h_change < -5.0:
+            return "Deleveraging longs -- high funding + falling OI, cooling off"
+        elif funding_rate < -0.0002 and oi_4h_change > 5.0:
+            return "Short squeeze building -- negative funding + rising OI"
+        elif funding_rate < -0.0002 and oi_4h_change < -5.0:
+            return "Panic deleveraging -- negative funding + falling OI, capitulation risk"
+        elif abs(oi_4h_change) > 5.0:
+            return f"OI moving {'up' if oi_4h_change > 0 else 'down'} significantly with neutral funding"
+        else:
+            return "Neutral leverage conditions"
 
     # ------------------------------------------------------------------
     # Core evaluation
@@ -425,28 +520,81 @@ Respond ONLY with valid JSON in this exact format:
     # Response parsing
     # ------------------------------------------------------------------
 
+    def _sanitize_response(self, raw_text: str) -> dict:
+        """Use multi-stage extraction to get valid JSON from LLM response.
+
+        Stages:
+        1. Direct JSON parse
+        2. Extract from markdown code blocks
+        3. Regex for raw JSON object containing "action"
+        4. Last resort: ask a fast/cheap LLM to extract the JSON
+        """
+        # Stage 1: Direct parse
+        try:
+            return json.loads(raw_text.strip())
+        except json.JSONDecodeError:
+            pass
+
+        # Stage 2: Extract JSON from markdown code blocks
+        json_match = re.search(
+            r'```(?:json)?\s*(\{.*?\})\s*```', raw_text, re.DOTALL
+        )
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Stage 3: Find raw JSON object containing "action"
+        json_match = re.search(
+            r'\{[^{}]*"action"[^{}]*\}', raw_text, re.DOTALL
+        )
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Stage 4: Ask a fast model to extract the JSON
+        if self._client:
+            try:
+                sanitize_prompt = (
+                    "Extract the valid JSON object from this text. "
+                    "Return ONLY the JSON, nothing else:\n\n"
+                    + raw_text[:1000]
+                )
+                if self._provider == "anthropic":
+                    resp = self._client.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=256,
+                        messages=[{"role": "user", "content": sanitize_prompt}],
+                    )
+                    return json.loads(resp.content[0].text)
+                else:
+                    resp = self._client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        max_tokens=256,
+                        messages=[{"role": "user", "content": sanitize_prompt}],
+                    )
+                    return json.loads(resp.choices[0].message.content)
+            except Exception as e:
+                logger.warning("Sanitizer LLM failed: %s", e)
+
+        raise ValueError(
+            f"Could not parse LLM response as JSON: {raw_text[:200]}"
+        )
+
     def _parse_response(
         self, response: str, symbol: str, fused_signal: Signal
     ) -> MetaDecision:
         """Parse LLM JSON response into MetaDecision.
 
-        Handles markdown code blocks and gracefully falls back to HOLD
-        on parse failure (conservative default).
+        Uses _sanitize_response for robust multi-stage JSON extraction,
+        including a fast-LLM fallback for malformed responses.
+        Gracefully falls back to HOLD on parse failure (conservative default).
         """
         try:
-            # Extract JSON from response (handle markdown code blocks)
-            text = response.strip()
-            if text.startswith("```"):
-                # Remove opening ``` (with optional language tag) and closing ```
-                parts = text.split("```")
-                # parts[0] is empty, parts[1] is the code block content
-                if len(parts) >= 2:
-                    text = parts[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-            text = text.strip()
-
-            data = json.loads(text)
+            data = self._sanitize_response(response)
 
             action = data.get("action", "HOLD").upper()
             # Validate action
@@ -461,6 +609,21 @@ Respond ONLY with valid JSON in this exact format:
             if conviction not in ("low", "medium", "high"):
                 conviction = "medium"
 
+            # Extract debate perspectives and prepend to reasoning
+            bull_case = data.get("bull_case", "")
+            bear_case = data.get("bear_case", "")
+            reasoning = data.get("reasoning", "")
+            if bull_case or bear_case:
+                reasoning = (
+                    f"[BULL] {bull_case} [BEAR] {bear_case} "
+                    f"[DECISION] {reasoning}"
+                )
+
+            # Append debate perspectives to concerns for audit trail
+            concerns = data.get("concerns", [])
+            if bear_case:
+                concerns.append(f"Bear case: {bear_case}")
+
             return MetaDecision(
                 action=action,
                 symbol=symbol,
@@ -469,9 +632,9 @@ Respond ONLY with valid JSON in this exact format:
                     data.get("adjusted_confidence", fused_signal.confidence)
                 ),
                 size_adjustment=float(data.get("size_adjustment", 1.0)),
-                reasoning=data.get("reasoning", ""),
+                reasoning=reasoning,
                 risk_notes=data.get("risk_notes", ""),
-                concerns=data.get("concerns", []),
+                concerns=concerns,
                 time_horizon=data.get("time_horizon", ""),
                 conviction=conviction,
             )

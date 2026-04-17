@@ -17,15 +17,17 @@ import logging
 import os
 import time
 import traceback
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from src.analysis.macro_signal import MacroSignal, MacroVerdict
 from src.analysis.meta_reasoning import MetaDecision, MetaReasoningAgent
 from src.analysis.onchain.onchain_aggregator import OnChainAggregator, OnChainSignal
+from src.analysis.onchain.whale_detector import WhaleDetector, WhaleSignal
 from src.analysis.sentiment.sentiment_signals import SentimentAnalysisAgent
 from src.analysis.technical.signals import TechnicalAnalysisAgent
 from src.config import get_config
@@ -221,6 +223,11 @@ class Orchestrator:
         self._position_monitor: Optional[PositionMonitor] = None
         self._meta_agent: Optional[MetaReasoningAgent] = None
         self._onchain_aggregator: Optional[OnChainAggregator] = None
+        self._macro_signal: Optional[MacroSignal] = None
+        self._whale_detector: Optional[WhaleDetector] = None
+
+        # Signal percentile calibration history (per-asset)
+        self._signal_history: Dict[str, deque] = {}
 
         # Circuit breaker
         self._circuit_breaker = CircuitBreaker(config)
@@ -247,6 +254,9 @@ class Orchestrator:
         self._rotation_check_interval = orch_cfg.get(
             "rotation_check_every_n_cycles", 10
         )
+
+        # Asset cooldowns — prevent re-entry after stop-loss, exit, or risk rejection
+        self._asset_cooldowns: Dict[str, int] = {}
 
         # State
         self._running = False
@@ -330,6 +340,31 @@ class Orchestrator:
             logger.error("Failed to initialize On-Chain Aggregator: %s", e)
             status["onchain"] = False
             self._error_counts["init_onchain"] += 1
+
+        # Macro Signal Layer
+        try:
+            self._macro_signal = MacroSignal(
+                hl_market_data=getattr(self._onchain_aggregator, '_hl_market_data', None)
+            )
+            status["macro_signal"] = True
+            logger.info("Macro Signal Layer initialized")
+        except Exception as e:
+            logger.error("Failed to initialize Macro Signal Layer: %s", e)
+            self._macro_signal = None
+            status["macro_signal"] = False
+            self._error_counts["init_macro_signal"] += 1
+
+        # Whale Detector (OI vs price divergence)
+        try:
+            hl_data = getattr(self._onchain_aggregator, '_hl_market_data', None)
+            self._whale_detector = WhaleDetector(hl_market_data=hl_data)
+            status["whale_detector"] = True
+            logger.info("Whale Detector initialized")
+        except Exception as e:
+            logger.error("Failed to initialize Whale Detector: %s", e)
+            self._whale_detector = None
+            status["whale_detector"] = False
+            self._error_counts["init_whale_detector"] += 1
 
         # Risk Management subsystem
         try:
@@ -688,6 +723,50 @@ class Orchestrator:
 
         logger.info("=== Scan cycle #%d started ===", self._scan_count)
 
+        # Record BTC price for macro signal
+        if self._macro_signal:
+            try:
+                btc_price = self._get_current_price("BTC/USDT")
+                if btc_price and btc_price > 0:
+                    self._macro_signal.record_btc_price(btc_price)
+            except Exception:
+                pass
+
+        # Record prices for whale detector (all scanned assets)
+        if self._whale_detector:
+            for asset in self._assets:
+                try:
+                    price = self._get_current_price(asset)
+                    if price and price > 0:
+                        self._whale_detector.record_price(asset, price)
+                except Exception:
+                    pass
+
+        # Fast risk-off: BTC crash detection
+        if self._macro_signal and self._macro_signal.check_fast_risk_off():
+            logger.warning("FAST RISK-OFF: BTC dropped >3%% in 24h — closing all positions")
+            if self._telegram:
+                self._telegram.send_alert(
+                    "FAST RISK-OFF: BTC dropped >3% in 24h. "
+                    "Closing all positions and pausing trading for 20 cycles.",
+                    AlertType.SYSTEM_ERROR,
+                )
+            # Close all open positions
+            if self._execution_agent:
+                for pos in self._execution_agent.get_open_positions():
+                    try:
+                        self._execution_agent.close_position(
+                            pos, reason="fast_risk_off",
+                        )
+                        self._asset_cooldowns[pos.asset] = self._scan_count + 20
+                        logger.info("Fast risk-off: closed %s", pos.asset)
+                    except Exception as e:
+                        logger.error("Failed to close %s in risk-off: %s", pos.asset, e)
+            # Set cooldown on all assets for 20 cycles (~30 min at 90s interval)
+            for asset in self._assets:
+                self._asset_cooldowns[asset] = self._scan_count + 20
+            return  # Skip the rest of the scan
+
         # Check circuit breakers first
         tripped, trip_reason = self._circuit_breaker.check()
         if tripped:
@@ -752,6 +831,54 @@ class Orchestrator:
             self._scan_count, elapsed, signals_generated, trades_executed,
             exits_processed,
         )
+
+        # Send Telegram cycle summary every N cycles (avoid spam)
+        # Also send immediately whenever something actually happened
+        CYCLE_SUMMARY_INTERVAL = 30  # ~30 min at 60s scan interval
+        should_send_summary = (
+            (self._scan_count % CYCLE_SUMMARY_INTERVAL == 0)
+            or signals_generated > 0
+            or trades_executed > 0
+            or exits_processed > 0
+        )
+        if self._telegram and self._telegram._enabled and should_send_summary:
+            try:
+                portfolio_value = 0.0
+                open_positions = 0
+                if self._portfolio_monitor is not None:
+                    state = self._portfolio_monitor.get_state()
+                    portfolio_value = state.total_value
+                if self._execution_agent is not None:
+                    open_positions = len(self._execution_agent.get_open_positions())
+                # Include macro verdict in cycle summary
+                macro_verdict_str = "n/a"
+                if self._macro_signal:
+                    try:
+                        macro_summary = self._macro_signal.get_summary()
+                        btc_ret = macro_summary.get("btc_7d_return")
+                        if btc_ret is not None:
+                            macro_verdict_str = (
+                                f"{macro_summary['verdict'].upper()}"
+                                f" (BTC 7d: {btc_ret:+.1f}%)"
+                            )
+                        else:
+                            macro_verdict_str = macro_summary["verdict"].upper()
+                    except Exception:
+                        pass
+
+                self._telegram.alert_cycle_summary(
+                    scan_num=self._scan_count,
+                    elapsed_sec=elapsed,
+                    signals_generated=signals_generated,
+                    trades_executed=trades_executed,
+                    exits_processed=exits_processed,
+                    portfolio_value=portfolio_value,
+                    open_positions=open_positions,
+                    next_scan_in=self.scan_interval,
+                    macro_verdict=macro_verdict_str,
+                )
+            except Exception as e:
+                logger.debug("Failed to send cycle summary alert: %s", e)
 
         # Write heartbeat file so the health server knows the loop is alive
         try:
@@ -836,6 +963,12 @@ class Orchestrator:
                     )
                     if result.status == TradeStatus.FILLED:
                         exits += 1
+                        # Set cooldown: 3 cycles after any exit
+                        self._asset_cooldowns[position.asset] = self._scan_count + 3
+                        logger.info(
+                            "Cooldown set for %s: %d cycles (exit reason: %s)",
+                            position.asset, 3, close_reason,
+                        )
                         self._log_decision(
                             position.asset, "EXIT",
                             f"Position closed: {close_reason} @ {result.fill_price:.4f}",
@@ -928,6 +1061,13 @@ class Orchestrator:
                 logger.info("Skipping %s — already have open position", asset)
                 return result
 
+        # Cooldown check — prevent re-entry after stop-loss or exit
+        cooldown_until = self._asset_cooldowns.get(asset, 0)
+        if self._scan_count < cooldown_until:
+            result["reason"] = f"cooldown_active: {cooldown_until - self._scan_count} cycles remaining"
+            logger.info("Skipping %s — cooldown active (%d cycles remaining)", asset, cooldown_until - self._scan_count)
+            return result
+
         # Also check Hyperliquid directly for open positions (sync HTTP call)
         try:
             import requests as _req
@@ -983,33 +1123,145 @@ class Orchestrator:
                     "live mode. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
                     asset,
                 )
-                if self._telegram:
+                # Only alert once, not every asset every cycle
+                if self._telegram and not getattr(self, '_ai_keys_alert_sent', False):
                     self._telegram.send_alert(
                         "FAIL-SAFE: AI API keys missing in LIVE mode. "
                         "All trades blocked until keys are configured.",
                         AlertType.SYSTEM_ERROR,
                     )
+                    self._ai_keys_alert_sent = True
                 return result
 
         # -- Step 1: Collect Technical Signal --
         tech_signal = self._get_technical_signal(asset)
 
+        # Capture analysis context for rich Telegram alerts
+        if not hasattr(self, '_asset_analysis_context'):
+            self._asset_analysis_context = {}
+        ctx: Dict[str, Any] = {}
+        if tech_signal:
+            ctx["ensemble_direction"] = tech_signal.direction.value
+            ctx["ensemble_confidence"] = tech_signal.confidence
+            if tech_signal.metadata:
+                ctx["confluences"] = tech_signal.metadata.get("confluences", 0)
+                ctx["ml_predictions"] = tech_signal.metadata.get("ml_predictions", {})
+
         # -- Step 2: Collect Sentiment Signal (skip if degradation says so) --
         sentiment_signal = None
         if self._degradation.should_use_sentiment():
             sentiment_signal = self._get_sentiment_signal(asset)
+        if sentiment_signal:
+            ctx["sentiment_status"] = (
+                f"{sentiment_signal.direction.value} {sentiment_signal.confidence:.1f}%"
+            )
+        else:
+            ctx["sentiment_status"] = "unavailable (Reddit 401)"
 
         # -- Step 2.5: Collect On-Chain Signal --
         onchain_signal = await self._get_onchain_signal(asset)
+        if onchain_signal:
+            ctx["onchain_status"] = (
+                f"{getattr(onchain_signal, 'sentiment', 'neutral')} "
+                f"(conf={getattr(onchain_signal, 'confidence', 0):.2f})"
+            )
+        # Add macro verdict to per-asset context
+        if self._macro_signal:
+            try:
+                macro_summary = self._macro_signal.get_summary()
+                ctx["macro_verdict"] = macro_summary["verdict"]
+                ctx["macro_btc_7d"] = macro_summary.get("btc_7d_return")
+            except Exception:
+                ctx["macro_verdict"] = "n/a"
+        # -- Step 2.7: Whale detection (OI vs price divergence) --
+        whale_signal: Optional[WhaleSignal] = None
+        if self._whale_detector:
+            try:
+                whale_signal = self._whale_detector.detect(asset)
+                if whale_signal:
+                    ctx["whale_signal"] = (
+                        f"{whale_signal.signal_type} ({whale_signal.direction}, "
+                        f"strength={whale_signal.strength:.0%})"
+                    )
+                    ctx["whale_details"] = whale_signal.details
+                else:
+                    ctx["whale_signal"] = "no whale activity"
+            except Exception as e:
+                logger.debug("Whale detection error for %s: %s", asset, e)
+                ctx["whale_signal"] = "error"
+
+        self._asset_analysis_context[asset] = ctx
 
         # -- Step 3: Fuse signals (using degradation-adjusted weights) --
         fused_signal = self._fuse_signals(asset, tech_signal, sentiment_signal, onchain_signal)
+        if fused_signal:
+            ctx["fused_direction"] = fused_signal.direction.value
+            ctx["fused_confidence"] = fused_signal.confidence
 
         if fused_signal is None or fused_signal.direction == Direction.HOLD:
             result["reason"] = "no_actionable_signal"
+            self._log_decision(asset, "HOLD", result["reason"], fused_signal)
             return result
 
         result["signal_generated"] = True
+
+        # -- Step 3.2: Whale signal confidence adjustment --
+        if whale_signal and fused_signal:
+            fused_dir_numeric = _direction_to_numeric(fused_signal.direction)
+            whale_bullish = whale_signal.direction == "bullish"
+            whale_bearish = whale_signal.direction == "bearish"
+            # Aligned: whale bullish + fused long, or whale bearish + fused short
+            aligned = (whale_bullish and fused_dir_numeric > 0) or (
+                whale_bearish and fused_dir_numeric < 0
+            )
+            opposed = (whale_bullish and fused_dir_numeric < 0) or (
+                whale_bearish and fused_dir_numeric > 0
+            )
+            if aligned:
+                fused_signal.confidence = min(100.0, fused_signal.confidence * 1.05)
+                logger.info(
+                    "Whale signal ALIGNED with %s for %s — boosted confidence to %.1f%%",
+                    fused_signal.direction.value, asset, fused_signal.confidence,
+                )
+            elif opposed:
+                fused_signal.confidence *= 0.95
+                logger.info(
+                    "Whale signal OPPOSED to %s for %s — reduced confidence to %.1f%%",
+                    fused_signal.direction.value, asset, fused_signal.confidence,
+                )
+            if fused_signal.metadata is None:
+                fused_signal.metadata = {}
+            fused_signal.metadata["whale_signal"] = {
+                "type": whale_signal.signal_type,
+                "direction": whale_signal.direction,
+                "strength": whale_signal.strength,
+                "aligned": aligned,
+            }
+
+        # -- Step 3.3: Signal percentile calibration --
+        if fused_signal:
+            if asset not in self._signal_history:
+                self._signal_history[asset] = deque(maxlen=200)
+            self._signal_history[asset].append(fused_signal.confidence)
+
+            # Percentile calibration: only informational, adds context for meta-reasoning
+            history = list(self._signal_history.get(asset, []))
+            if len(history) >= 20:  # need minimum history
+                p90 = float(np.percentile(history, 90))
+                percentile_rank = (
+                    sum(1 for h in history if fused_signal.confidence > h) / len(history) * 100
+                )
+                if fused_signal.confidence < p90:
+                    logger.info(
+                        "PERCENTILE FILTER: %s confidence %.1f%% below P90 (%.1f%%) of recent history",
+                        asset, fused_signal.confidence, p90,
+                    )
+                if fused_signal.metadata is None:
+                    fused_signal.metadata = {}
+                fused_signal.metadata["percentile_rank"] = percentile_rank
+                fused_signal.metadata["p90_threshold"] = p90
+                ctx["percentile_rank"] = f"{percentile_rank:.0f}th"
+                ctx["p90_threshold"] = f"{p90:.1f}%"
 
         # -- Step 3.5: Apply degradation confidence penalty --
         confidence_penalty = self._degradation.get_confidence_penalty()
@@ -1042,6 +1294,15 @@ class Orchestrator:
                     pre_meta_conf = fused_signal.confidence
                     fused_signal.confidence = meta_decision.adjusted_confidence
                     meta_size_adjustment = meta_decision.size_adjustment
+
+                    # Capture meta-reasoning context for Telegram alerts
+                    if hasattr(self, '_asset_analysis_context') and asset in self._asset_analysis_context:
+                        self._asset_analysis_context[asset]["meta_reasoning"] = (
+                            meta_decision.reasoning or ""
+                        )
+                        self._asset_analysis_context[asset]["meta_adjusted_conf"] = (
+                            meta_decision.adjusted_confidence
+                        )
 
                     if fused_signal.metadata is None:
                         fused_signal.metadata = {}
@@ -1084,12 +1345,46 @@ class Orchestrator:
                 self._degradation.report_failure(DegradationManager.LLM, str(e))
                 # Continue with original signal (meta-reasoning is optional)
 
+        # -- Step 3.8: Macro gating -- suppress longs in defensive macro --
+        if hasattr(self, '_macro_signal') and self._macro_signal:
+            macro = self._macro_signal.evaluate()
+            if macro == MacroVerdict.DEFENSIVE and fused_signal.direction in (
+                Direction.BUY, Direction.STRONG_BUY
+            ):
+                result["reason"] = "macro_defensive_suppressed_long"
+                self._log_decision(asset, "SKIPPED", result["reason"], fused_signal)
+                return result
+            elif macro == MacroVerdict.DEFENSIVE and fused_signal.direction in (
+                Direction.SELL, Direction.STRONG_SELL
+            ):
+                fused_signal.confidence *= 1.05  # 5% boost for shorts in defensive macro
+
         # -- Step 4: Check confidence threshold --
         logger.info(
             "FUSED %s: direction=%s confidence=%.1f%% source=%s",
             asset, fused_signal.direction.value, fused_signal.confidence,
             fused_signal.source,
         )
+
+        # Edge-threshold guard: only trade when conviction exceeds threshold by a minimum margin
+        # Prevents borderline entries that are likely to fail
+        EDGE_MARGIN = 5.0  # must exceed threshold by at least 5%
+        effective_threshold = self.min_confidence + EDGE_MARGIN
+        if fused_signal.confidence < effective_threshold:
+            # Still log at the original threshold level for monitoring
+            if fused_signal.confidence >= self.min_confidence:
+                logger.info(
+                    "EDGE GUARD: %s confidence %.1f%% passes threshold %.1f%% but "
+                    "below edge threshold %.1f%% — skipping borderline entry",
+                    asset, fused_signal.confidence, self.min_confidence, effective_threshold
+                )
+                result["reason"] = (
+                    f"edge_guard: {fused_signal.confidence:.1f}% passes {self.min_confidence}% "
+                    f"but below {effective_threshold}% edge threshold"
+                )
+                self._log_decision(asset, "SKIPPED", result["reason"], fused_signal)
+                return result
+
         if fused_signal.confidence < self.min_confidence:
             result["reason"] = (
                 f"confidence_below_threshold: {fused_signal.confidence:.1f}% "
@@ -1123,6 +1418,8 @@ class Orchestrator:
             result["reason"] = f"risk_rejected: {risk_decision.reason}"
             logger.info("RISK REJECTED %s: %s", asset, risk_decision.reason)
             self._log_decision(asset, "REJECTED", risk_decision.reason, fused_signal)
+            # Set cooldown to prevent hammering the same asset after risk rejection
+            self._asset_cooldowns[asset] = self._scan_count + 3
             return result
 
         # -- Step 7: Execute trade --
@@ -1856,7 +2153,7 @@ class Orchestrator:
         reason: str,
         signal: Optional[Signal] = None,
     ) -> None:
-        """Log a decision with full context."""
+        """Log a decision with full context (and send Telegram alert)."""
         entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "scan_cycle": self._scan_count,
@@ -1875,6 +2172,95 @@ class Orchestrator:
         # Keep log bounded
         if len(self._decision_log) > 10000:
             self._decision_log = self._decision_log[-5000:]
+
+        # Send detailed Telegram alert with full reasoning
+        try:
+            self._send_decision_alert(asset, action, reason, signal)
+        except Exception as e:
+            logger.debug("Failed to send Telegram decision alert: %s", e)
+
+    def _send_decision_alert(
+        self,
+        asset: str,
+        action: str,
+        reason: str,
+        signal: Optional[Signal] = None,
+    ) -> None:
+        """Send a rich Telegram alert with full scan context for this asset.
+
+        Filtering rules (avoid spam):
+        - Always send: EXECUTED, REJECTED (risk or any hard gate)
+        - Skip HOLD decisions entirely (they happen every cycle, no action needed)
+        - SKIPPED: only send if fused confidence is notable (>= 60%) — close to tradeable
+        """
+        if not self._telegram or not self._telegram._enabled:
+            return
+
+        # Pull last cached analysis context for this asset (set during _process_asset)
+        ctx = getattr(self, '_asset_analysis_context', {}).get(asset, {})
+        fused_conf_preview = (
+            signal.confidence if signal else ctx.get("fused_confidence", 0.0)
+        )
+
+        # FILTERING: skip low-value alerts
+        action_upper = action.upper()
+        if action_upper == "HOLD":
+            return  # no actionable signal, happens constantly — skip entirely
+        if action_upper == "SKIPPED" and fused_conf_preview < 60.0:
+            return  # close-to-tradeable signals still alert, weak ones don't
+
+        ml_predictions = ctx.get("ml_predictions", {})
+        ensemble_dir = ctx.get("ensemble_direction", "n/a")
+        ensemble_conf = ctx.get("ensemble_confidence", 0.0)
+        confluences = ctx.get("confluences", 0)
+        sentiment_status = ctx.get("sentiment_status", "n/a")
+        onchain_status = ctx.get("onchain_status", "n/a")
+        fused_dir = signal.direction.value if signal else ctx.get("fused_direction", "HOLD")
+        fused_conf = signal.confidence if signal else ctx.get("fused_confidence", 0.0)
+        meta_reasoning = ctx.get("meta_reasoning", "")
+        meta_adjusted = ctx.get("meta_adjusted_conf")
+
+        # Build expectation string based on what would happen
+        expectation = ""
+        if action == "EXECUTED":
+            expectation = "Trade placed. Monitoring for stop-loss / take-profit."
+        elif action == "HOLD" or "no_actionable_signal" in reason:
+            expectation = (
+                f"Models are not converging on a direction. "
+                f"Need stronger market move or higher confluences."
+            )
+        elif "confidence_below_threshold" in reason:
+            gap = self.min_confidence - fused_conf
+            expectation = (
+                f"Signal valid but {gap:.1f}% below {self.min_confidence}% threshold. "
+                f"Watching for strengthening."
+            )
+        elif "ai_keys_missing" in reason:
+            expectation = "Add ANTHROPIC_API_KEY to enable trading."
+        elif "risk_rejected" in reason:
+            expectation = "Risk gate rejected. Trade would exceed configured limits."
+
+        try:
+            self._telegram.alert_scan_analysis(
+                asset=asset,
+                scan_num=self._scan_count,
+                ml_predictions=ml_predictions,
+                ensemble_direction=ensemble_dir,
+                ensemble_confidence=ensemble_conf,
+                confluences=confluences,
+                sentiment_status=sentiment_status,
+                onchain_status=onchain_status,
+                fused_direction=fused_dir,
+                fused_confidence=fused_conf,
+                meta_reasoning=meta_reasoning,
+                meta_adjusted_conf=meta_adjusted,
+                decision=action,
+                reason=reason,
+                expectation=expectation,
+                threshold=self.min_confidence,
+            )
+        except Exception as e:
+            logger.debug("alert_scan_analysis failed: %s", e)
 
     # --- Status and diagnostics ---
 

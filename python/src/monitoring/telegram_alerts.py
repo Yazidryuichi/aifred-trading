@@ -16,6 +16,9 @@ class AlertType(Enum):
     MODEL_DEGRADATION = "model_degradation"
     SYSTEM_ERROR = "system_error"
     DRAWDOWN_WARNING = "drawdown_warning"
+    SCAN_ANALYSIS = "scan_analysis"
+    CYCLE_SUMMARY = "cycle_summary"
+    PEAK_PROFIT_STOP = "peak_profit_stop"
 
 
 class TelegramAlerts:
@@ -27,7 +30,7 @@ class TelegramAlerts:
 
     # Rate limiting: max messages per window
     RATE_LIMIT_WINDOW = 60  # seconds
-    RATE_LIMIT_MAX = 20  # max messages per window
+    RATE_LIMIT_MAX = 30  # max messages per window (raised to allow per-asset analysis)
 
     def __init__(self, bot_token: str = "", chat_id: str = "",
                  alert_config: Optional[Dict[str, bool]] = None):
@@ -44,6 +47,9 @@ class TelegramAlerts:
             "daily_summary": True,
             "model_degradation": True,
             "drawdown_warning": True,
+            "scan_analysis": True,
+            "cycle_summary": True,
+            "peak_profit_stop": True,
         }
         self._alert_config = {**defaults, **(alert_config or {})}
 
@@ -116,19 +122,31 @@ class TelegramAlerts:
             return False
 
     def _send_sync(self, message: str) -> None:
-        """Send message synchronously."""
+        """Send message — works whether called from sync or async context."""
         if self._bot is None:
             return
+        # Detect if we're inside a running event loop
         try:
-            # python-telegram-bot v20+ is async-first; use a new event loop for sync
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(self._bot.send_message(
-                chat_id=self.chat_id, text=message, parse_mode="HTML",
-            ))
-            loop.close()
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            # Already in an async context
-            asyncio.create_task(self._send_async(message))
+            running_loop = None
+
+        if running_loop is not None:
+            # Async context: schedule and keep a reference so it isn't garbage collected
+            task = running_loop.create_task(self._send_async(message))
+            if not hasattr(self, '_pending_tasks'):
+                self._pending_tasks = set()
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+        else:
+            # Sync context: spin up a temporary loop
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._bot.send_message(
+                    chat_id=self.chat_id, text=message, parse_mode="HTML",
+                ))
+            finally:
+                loop.close()
 
     async def _send_async(self, message: str) -> None:
         if self._bot is None:
@@ -187,6 +205,109 @@ class TelegramAlerts:
             f"Error: {error}"
         )
         return self.send_alert(msg, AlertType.SYSTEM_ERROR)
+
+    def alert_scan_analysis(
+        self,
+        asset: str,
+        scan_num: int,
+        ml_predictions: Optional[Dict[str, str]] = None,
+        ensemble_direction: str = "HOLD",
+        ensemble_confidence: float = 0.0,
+        confluences: int = 0,
+        sentiment_status: str = "n/a",
+        onchain_status: str = "n/a",
+        fused_direction: str = "HOLD",
+        fused_confidence: float = 0.0,
+        meta_reasoning: Optional[str] = None,
+        meta_adjusted_conf: Optional[float] = None,
+        decision: str = "HOLD",
+        reason: str = "",
+        expectation: str = "",
+        threshold: float = 80.0,
+    ) -> bool:
+        """Send a detailed per-asset scan analysis with full reasoning chain."""
+        ml_block = ""
+        if ml_predictions:
+            for model, pred in ml_predictions.items():
+                ml_block += f"  • {model}: {pred}\n"
+
+        meta_block = ""
+        if meta_reasoning:
+            adj_str = f" → adjusted: {meta_adjusted_conf:.1f}%" if meta_adjusted_conf is not None else ""
+            meta_block = (
+                f"\n<b>🧠 Meta-Reasoning (Claude){adj_str}</b>\n"
+                f"<i>{meta_reasoning[:400]}</i>\n"
+            )
+
+        emoji = {
+            "EXECUTED": "✅",
+            "REJECTED": "❌",
+            "HOLD": "⏸",
+            "SKIPPED": "⏭",
+        }.get(decision.upper(), "📊")
+
+        msg = (
+            f"<b>{emoji} Scan #{scan_num} — {asset}</b>\n"
+            f"\n"
+            f"<b>ML Models</b>\n"
+            f"{ml_block}"
+            f"\n"
+            f"<b>Ensemble:</b> {ensemble_direction} {ensemble_confidence:.1f}% ({confluences} confluences)\n"
+            f"<b>Sentiment:</b> {sentiment_status}\n"
+            f"<b>On-chain:</b> {onchain_status}\n"
+            f"\n"
+            f"<b>📊 Fused Signal:</b> {fused_direction} @ {fused_confidence:.1f}%"
+            f"{meta_block}"
+            f"\n"
+            f"<b>Decision:</b> {decision}\n"
+            f"<b>Why:</b> {reason}\n"
+        )
+        if expectation:
+            msg += f"<b>Expectation:</b> {expectation}\n"
+        msg += f"<i>Threshold: {threshold:.0f}% required for live execution</i>"
+
+        return self.send_alert(msg, AlertType.SCAN_ANALYSIS)
+
+    def alert_cycle_summary(
+        self,
+        scan_num: int,
+        elapsed_sec: float,
+        signals_generated: int,
+        trades_executed: int,
+        exits_processed: int,
+        portfolio_value: float,
+        open_positions: int,
+        next_scan_in: int = 60,
+        macro_verdict: str = "n/a",
+    ) -> bool:
+        """Send a per-scan-cycle summary."""
+        msg = (
+            f"<b>🔄 Scan #{scan_num} Complete</b>\n"
+            f"\n"
+            f"⏱ Duration: {elapsed_sec:.1f}s\n"
+            f"📊 Signals: {signals_generated}\n"
+            f"💸 Trades: {trades_executed}\n"
+            f"🚪 Exits: {exits_processed}\n"
+            f"💰 Portfolio: ${portfolio_value:.2f}\n"
+            f"📍 Open positions: {open_positions}\n"
+            f"🌐 Macro: {macro_verdict}\n"
+            f"\n"
+            f"<i>Next scan in ~{next_scan_in}s</i>"
+        )
+        return self.send_alert(msg, AlertType.CYCLE_SUMMARY)
+
+    def alert_peak_profit_stop(self, asset: str, peak_pnl: float,
+                              current_pnl: float, locked_profit: float) -> bool:
+        """Send alert when peak profit trailing stop triggers."""
+        msg = (
+            f"<b>Peak Profit Stop</b>\n"
+            f"Asset: {asset}\n"
+            f"Peak P&L: {peak_pnl:+.1f}%\n"
+            f"Current P&L: {current_pnl:+.1f}%\n"
+            f"Drawdown from peak: {peak_pnl - current_pnl:.1f}%\n"
+            f"Locked profit: {locked_profit:+.1f}%"
+        )
+        return self.send_alert(msg, AlertType.PEAK_PROFIT_STOP)
 
     def alert_drawdown_warning(self, current_drawdown: float,
                                limit: float) -> bool:

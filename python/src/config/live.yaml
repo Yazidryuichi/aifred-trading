@@ -10,13 +10,25 @@ assets:
     - "BTC/USDT"
     - "ETH/USDT"
     - "SOL/USDT"
+    - "HYPE/USDT"
+    - "ZEC/USDT"
+    - "XRP/USDT"
+    - "DOGE/USDT"
+    - "ORDI/USDT"
+    - "SUI/USDT"
+    - "AAVE/USDT"
+    - "TAO/USDT"
+    - "ENA/USDT"
+    - "NEAR/USDT"
+    - "AVAX/USDT"
+    - "LINK/USDT"
   stocks: []
   forex: []
 
 orchestrator:
-  # Restored to 80% — execution pipeline validated, only high-conviction trades
-  min_confidence_threshold: 80
-  max_daily_trades: 2  # Micro account: max 2 trades per day
+  # Aggressive mode — 65% threshold to catch more signals
+  min_confidence_threshold: 65
+  max_daily_trades: 10  # 30 assets, allow up to 10 trades per day
 
 risk:
   max_position_pct: 100.0
