@@ -59,6 +59,10 @@ optuna>=3.4.0
 # ML Tracking
 mlflow>=2.9.0
 
+# AI/LLM Providers
+anthropic>=0.30.0
+openai>=1.0.0
+
 # MCP (Model Context Protocol)
 mcp>=1.0.0
 
