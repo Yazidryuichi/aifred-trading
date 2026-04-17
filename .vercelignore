@@ -1,0 +1,4 @@
+python/
+docs/
+.qa-reports/
+.playwright-mcp/
