@@ -1,5 +1,6 @@
 """Structured trade logging to SQLite with query interface."""
 
+import json
 import logging
 import sqlite3
 from datetime import datetime
@@ -56,6 +57,12 @@ class TradeLogger:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
+            # Migration: add signal_sources column for multi-source attribution
+            try:
+                conn.execute("ALTER TABLE trades ADD COLUMN signal_sources TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset)
             """)
@@ -71,14 +78,31 @@ class TradeLogger:
         except Exception as e:
             logger.error("Failed to initialize trade logger DB: %s", e)
 
-    def log_trade(self, result: TradeResult) -> int:
-        """Log a completed trade result. Returns the row ID."""
+    def log_trade(self, result: TradeResult, signal_sources: Optional[List[str]] = None) -> int:
+        """Log a completed trade result. Returns the row ID.
+
+        Args:
+            result: The TradeResult from execution.
+            signal_sources: List of signal source identifiers that contributed
+                to this trade (e.g. ["lstm_sell", "bb_squeeze_release",
+                "whale_accumulation", "oi_bullish"]).
+        """
         proposal = result.proposal
         signal = proposal.signal
 
         side = "buy"
         if proposal.direction.value in ("SELL", "STRONG_SELL"):
             side = "sell"
+
+        # Build signal_sources JSON string
+        sources_json = None
+        if signal_sources:
+            sources_json = json.dumps(signal_sources)
+        elif signal and signal.metadata:
+            # Auto-extract signal sources from metadata if not explicitly provided
+            auto_sources = self._extract_signal_sources(signal)
+            if auto_sources:
+                sources_json = json.dumps(auto_sources)
 
         try:
             conn = self._get_conn()
@@ -88,8 +112,8 @@ class TradeLogger:
                     size, entry_price, stop_loss, take_profit,
                     fill_price, fill_size, slippage, fees,
                     status, exchange, signal_source, confidence,
-                    entry_time)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    entry_time, signal_sources)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     result.order_id,
                     proposal.asset,
@@ -110,17 +134,53 @@ class TradeLogger:
                     signal.source if signal else None,
                     signal.confidence if signal else None,
                     result.timestamp.isoformat(),
+                    sources_json,
                 ),
             )
             conn.commit()
             row_id = cursor.lastrowid
             conn.close()
-            logger.info("Trade logged: id=%d asset=%s status=%s",
-                        row_id, proposal.asset, result.status.value)
+            logger.info("Trade logged: id=%d asset=%s status=%s sources=%s",
+                        row_id, proposal.asset, result.status.value,
+                        signal_sources or "auto")
             return row_id
         except Exception as e:
             logger.error("Failed to log trade: %s", e)
             return -1
+
+    @staticmethod
+    def _extract_signal_sources(signal) -> List[str]:
+        """Auto-extract signal source identifiers from signal metadata."""
+        sources = []
+        md = signal.metadata or {}
+
+        # Source from signal itself
+        if signal.source:
+            sources.append(signal.source)
+
+        # ML model predictions
+        ml_preds = md.get("ml_predictions", {})
+        for model_name, pred in ml_preds.items():
+            direction = pred if isinstance(pred, str) else pred.get("direction", "")
+            if direction:
+                sources.append(f"{model_name}_{direction.lower()}")
+
+        # Whale signal
+        whale = md.get("whale_signal", {})
+        if isinstance(whale, dict) and whale.get("type"):
+            sources.append(f"whale_{whale.get('direction', 'unknown')}")
+
+        # Meta-reasoning
+        meta = md.get("meta_reasoning", {})
+        if isinstance(meta, dict) and meta.get("action"):
+            sources.append(f"meta_{meta['action'].lower()}")
+
+        # Confluences info
+        confluences = md.get("confluences", 0)
+        if confluences:
+            sources.append(f"confluences_{confluences}")
+
+        return sources
 
     def log_exit(self, order_id: str, exit_price: float, pnl: float,
                  exit_time: Optional[datetime] = None) -> None:
@@ -206,6 +266,65 @@ class TradeLogger:
             return [dict(row) for row in rows]
         except Exception:
             return []
+
+    def get_attribution_summary(self) -> Dict[str, Dict]:
+        """Get P&L attribution by signal source.
+
+        Parses the signal_sources JSON column and attributes each trade's P&L
+        to every signal source that contributed to it.
+
+        Returns:
+            {signal_source: {trades: N, total_pnl: X, win_rate: Y, avg_pnl: Z}}
+        """
+        try:
+            conn = self._get_conn()
+            rows = conn.execute(
+                "SELECT signal_sources, signal_source, pnl FROM trades "
+                "WHERE pnl IS NOT NULL"
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            logger.error("Failed to get attribution summary: %s", e)
+            return {}
+
+        attribution: Dict[str, Dict] = {}
+
+        for row in rows:
+            pnl = row["pnl"] or 0.0
+            sources = []
+
+            # Parse JSON signal_sources column
+            if row["signal_sources"]:
+                try:
+                    sources = json.loads(row["signal_sources"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Fall back to single signal_source column
+            if not sources and row["signal_source"]:
+                sources = [row["signal_source"]]
+
+            for src in sources:
+                if src not in attribution:
+                    attribution[src] = {
+                        "trades": 0,
+                        "total_pnl": 0.0,
+                        "wins": 0,
+                    }
+                attribution[src]["trades"] += 1
+                attribution[src]["total_pnl"] += pnl
+                if pnl > 0:
+                    attribution[src]["wins"] += 1
+
+        # Compute derived metrics
+        for src, stats in attribution.items():
+            n = stats["trades"]
+            stats["win_rate"] = round(stats["wins"] / n * 100, 1) if n > 0 else 0.0
+            stats["avg_pnl"] = round(stats["total_pnl"] / n, 4) if n > 0 else 0.0
+            stats["total_pnl"] = round(stats["total_pnl"], 4)
+            del stats["wins"]  # internal counter, not exposed
+
+        return attribution
 
     def get_pnl_summary(self) -> Dict[str, float]:
         """Get aggregate P&L statistics."""

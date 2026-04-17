@@ -26,9 +26,11 @@ import pandas as pd
 
 from src.analysis.macro_signal import MacroSignal, MacroVerdict
 from src.analysis.meta_reasoning import MetaDecision, MetaReasoningAgent
+from src.analysis.reasoning_bank import ReasoningBank, ReasoningEntry
 from src.analysis.onchain.onchain_aggregator import OnChainAggregator, OnChainSignal
 from src.analysis.onchain.whale_detector import WhaleDetector, WhaleSignal
 from src.analysis.sentiment.sentiment_signals import SentimentAnalysisAgent
+from src.analysis.technical.factor_scoring import FactorScorer
 from src.analysis.technical.signals import TechnicalAnalysisAgent
 from src.config import get_config
 from src.execution.execution_engine import ExecutionAgent
@@ -226,8 +228,22 @@ class Orchestrator:
         self._macro_signal: Optional[MacroSignal] = None
         self._whale_detector: Optional[WhaleDetector] = None
 
+        # Factor scoring (IC/ICIR)
+        self._factor_scorer = FactorScorer()
+        self._factor_scores: Dict[str, Dict] = {}  # asset -> factor scores
+
         # Signal percentile calibration history (per-asset)
         self._signal_history: Dict[str, deque] = {}
+
+        # ReasoningBank — semantic memory for past LLM decisions
+        reasoning_bank_path = os.path.join(
+            config.get("data", {}).get("base_dir", "data"),
+            "reasoning_bank.json",
+        )
+        self._reasoning_bank = ReasoningBank(persist_path=reasoning_bank_path)
+
+        # Edge-triggered signals: track previous direction per asset
+        self._prev_signal_states: Dict[str, str] = {}
 
         # Circuit breaker
         self._circuit_breaker = CircuitBreaker(config)
@@ -989,6 +1005,46 @@ class Orchestrator:
                             position.side, position.asset, close_reason,
                             position.unrealized_pnl,
                         )
+
+                        # -- LLM-as-Judge + ReasoningBank update --
+                        try:
+                            pnl_pct = 0.0
+                            if position.entry_price > 0:
+                                if position.side == "LONG":
+                                    pnl_pct = ((result.fill_price - position.entry_price) / position.entry_price) * 100
+                                else:
+                                    pnl_pct = ((position.entry_price - result.fill_price) / position.entry_price) * 100
+
+                            # Update ReasoningBank with outcome P&L
+                            self._reasoning_bank.update_outcome(
+                                position.asset, position.open_time if hasattr(position, 'open_time') else 0.0, pnl_pct,
+                            )
+
+                            # Run LLM-as-Judge if meta-reasoning is available
+                            if self._meta_agent and self._meta_agent.enabled:
+                                # Find the original reasoning from the bank
+                                similar = self._reasoning_bank.retrieve_similar(
+                                    position.asset, {}, n=1,
+                                )
+                                if similar:
+                                    orig = similar[0]
+                                    quality_score = self._meta_agent.judge_trade(
+                                        symbol=position.asset,
+                                        original_reasoning=orig.reasoning,
+                                        original_decision=orig.decision,
+                                        actual_pnl=pnl_pct,
+                                        market_context={},
+                                    )
+                                    self._reasoning_bank.update_quality_score(
+                                        position.asset, orig.timestamp, quality_score,
+                                    )
+                                    logger.info(
+                                        "LLM-as-Judge scored %s trade: %.2f/1.0",
+                                        position.asset, quality_score,
+                                    )
+                        except Exception as e:
+                            logger.debug("Post-trade evaluation failed for %s: %s", position.asset, e)
+
                     else:
                         logger.warning(
                             "Exit failed for %s: status=%s, error=%s",
@@ -1147,6 +1203,31 @@ class Orchestrator:
                 ctx["confluences"] = tech_signal.metadata.get("confluences", 0)
                 ctx["ml_predictions"] = tech_signal.metadata.get("ml_predictions", {})
 
+        # -- Step 1.5: Factor scoring (every 50 cycles) --
+        if tech_signal and self._data_provider and self._scan_count % 50 == 0 and self._scan_count > 0:
+            try:
+                factor_data = self._data_provider(asset, "1h")
+                if factor_data is not None and len(factor_data) >= 250:
+                    # Score all numeric indicator columns
+                    exclude_cols = {"open", "high", "low", "close", "volume"}
+                    factor_cols = [
+                        c for c in factor_data.columns
+                        if c not in exclude_cols and factor_data[c].dtype in ("float64", "float32", "int64")
+                    ]
+                    if factor_cols:
+                        scores = self._factor_scorer.score_factors(factor_data, factor_cols)
+                        if scores:
+                            self._factor_scores[asset] = scores
+                            summary = self._factor_scorer.get_summary()
+                            logger.info("Factor scoring for %s: %s", asset, summary)
+                            ctx["factor_scoring"] = summary
+                            ctx["top_factors"] = {
+                                n: s for n, s in self._factor_scorer.get_top_factors(5)
+                            }
+                            ctx["weak_factors"] = self._factor_scorer.get_weak_factors()
+            except Exception as e:
+                logger.debug("Factor scoring failed for %s: %s", asset, e)
+
         # -- Step 2: Collect Sentiment Signal (skip if degradation says so) --
         sentiment_signal = None
         if self._degradation.should_use_sentiment():
@@ -1204,6 +1285,18 @@ class Orchestrator:
             return result
 
         result["signal_generated"] = True
+
+        # -- Step 3.1b: Edge-triggered signals -- only act on state transitions
+        prev_direction = self._prev_signal_states.get(asset, "HOLD")
+        current_direction = fused_signal.direction.value
+        self._prev_signal_states[asset] = current_direction
+
+        if current_direction == prev_direction and current_direction != "HOLD":
+            # Same direction as last cycle — not a new signal, skip
+            # (prevents repeated triggers while condition stays true)
+            result["reason"] = f"edge_trigger: same direction as previous cycle ({current_direction})"
+            self._log_decision(asset, "EDGE_SKIP", result["reason"], fused_signal)
+            return result
 
         # -- Step 3.2: Whale signal confidence adjustment --
         if whale_signal and fused_signal:
@@ -1592,6 +1685,16 @@ class Orchestrator:
             except Exception as e:
                 logger.debug("Could not gather indicators for meta-reasoning: %s", e)
 
+        # Add factor scores to indicators context (if available)
+        if asset in self._factor_scores:
+            top_factors = self._factor_scorer.get_top_factors(5)
+            weak_factors = self._factor_scorer.get_weak_factors()
+            indicators["factor_scores"] = {
+                "top_predictive": {n: s for n, s in top_factors},
+                "weak_noise": weak_factors,
+                "summary": self._factor_scorer.get_summary(),
+            }
+
         # Get positions and portfolio
         positions: List[Position] = []
         portfolio_value = 0.0
@@ -1613,6 +1716,16 @@ class Orchestrator:
             }
         risk_state["circuit_breaker"] = self._circuit_breaker.status
 
+        # Retrieve similar past reasoning traces from ReasoningBank
+        similar_past = ""
+        try:
+            similar_entries = self._reasoning_bank.retrieve_similar(
+                asset, indicators, n=3,
+            )
+            similar_past = self._reasoning_bank.format_for_prompt(similar_entries)
+        except Exception as e:
+            logger.debug("ReasoningBank retrieval failed: %s", e)
+
         # Call meta-reasoning
         decision = await self._meta_agent.evaluate(
             symbol=asset,
@@ -1623,7 +1736,22 @@ class Orchestrator:
             positions=positions,
             portfolio_value=portfolio_value,
             risk_state=risk_state,
+            similar_past=similar_past,
         )
+
+        # Store the reasoning trace in the ReasoningBank
+        try:
+            entry = ReasoningEntry(
+                symbol=asset,
+                timestamp=time.time(),
+                market_context=indicators,
+                reasoning=decision.reasoning or "",
+                decision=decision.action,
+                confidence=decision.adjusted_confidence,
+            )
+            self._reasoning_bank.store(entry)
+        except Exception as e:
+            logger.debug("ReasoningBank store failed: %s", e)
 
         # Log for audit
         self._log_decision(
@@ -2014,10 +2142,12 @@ class Orchestrator:
         """Handle post-execution bookkeeping."""
         proposal = trade_result.proposal
 
-        # Log the trade
+        # Log the trade with signal attribution
         if self._trade_logger:
             try:
-                self._trade_logger.log_trade(trade_result)
+                # Build signal sources from the signal metadata
+                signal_sources = self._build_signal_sources(signal)
+                self._trade_logger.log_trade(trade_result, signal_sources=signal_sources)
             except Exception as e:
                 logger.error("Failed to log trade: %s", e)
 
@@ -2077,6 +2207,53 @@ class Orchestrator:
             proposal.direction.value, asset, trade_result.fill_price,
             trade_result.fill_size, trade_result.exchange, trade_result.slippage,
         )
+
+    def _build_signal_sources(self, signal: Signal) -> List[str]:
+        """Build a list of signal source identifiers from the signal metadata.
+
+        Extracts which components contributed to the trade decision:
+        ML models, technical patterns, whale signals, meta-reasoning, etc.
+        """
+        sources: List[str] = []
+        if signal is None:
+            return sources
+
+        # Primary source
+        if signal.source:
+            sources.append(signal.source)
+
+        md = signal.metadata or {}
+
+        # ML model predictions
+        ml_preds = md.get("ml_predictions", {})
+        for model_name, pred in ml_preds.items():
+            if isinstance(pred, dict):
+                direction = pred.get("direction", "")
+            else:
+                direction = str(pred)
+            if direction:
+                sources.append(f"{model_name}_{direction.lower()}")
+
+        # Whale signal
+        whale = md.get("whale_signal", {})
+        if isinstance(whale, dict) and whale.get("type"):
+            sources.append(f"whale_{whale.get('direction', 'unknown')}")
+
+        # Meta-reasoning
+        meta = md.get("meta_reasoning", {})
+        if isinstance(meta, dict) and meta.get("action"):
+            sources.append(f"meta_{meta['action'].lower()}")
+
+        # Confluences
+        confluences = md.get("confluences", 0)
+        if confluences:
+            sources.append(f"confluences_{confluences}")
+
+        # On-chain / OI signals
+        if md.get("onchain_sentiment"):
+            sources.append(f"onchain_{md['onchain_sentiment']}")
+
+        return sources
 
     def _get_current_price(self, asset: str) -> Optional[float]:
         """Get current price for an asset.

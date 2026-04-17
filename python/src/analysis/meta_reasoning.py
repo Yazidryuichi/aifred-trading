@@ -223,6 +223,7 @@ class MetaReasoningAgent:
         positions: List[Position],
         portfolio_value: float,
         risk_state: Dict[str, Any],
+        similar_past: str = "",
     ) -> str:
         """Build the reasoning prompt with full context."""
 
@@ -291,6 +292,10 @@ Respond ONLY with valid JSON in this exact format:
     "time_horizon": "<expected holding period>",
     "conviction": "low" or "medium" or "high"
 }}"""
+        # Append similar past reasoning traces (from ReasoningBank) if available
+        if similar_past:
+            prompt += "\n" + similar_past
+
         return prompt
 
     def _format_signal(self, signal: Signal) -> str:
@@ -389,6 +394,7 @@ Respond ONLY with valid JSON in this exact format:
         positions: Optional[List[Position]] = None,
         portfolio_value: float = 0.0,
         risk_state: Optional[Dict[str, Any]] = None,
+        similar_past: str = "",
     ) -> MetaDecision:
         """Evaluate a trading signal through LLM reasoning.
 
@@ -421,6 +427,7 @@ Respond ONLY with valid JSON in this exact format:
             positions or [],
             portfolio_value,
             risk_state or {},
+            similar_past=similar_past,
         )
 
         # Call LLM with timeout
@@ -676,3 +683,52 @@ Respond ONLY with valid JSON in this exact format:
             risk_notes="",
             llm_model="none (passthrough)",
         )
+
+    def judge_trade(self, symbol: str, original_reasoning: str,
+                     original_decision: str, actual_pnl: float,
+                     market_context: Dict) -> float:
+        """Post-trade evaluation: score reasoning quality 0-1.
+
+        Uses a cheap/fast model to evaluate whether the original reasoning
+        was sound, regardless of outcome (good reasoning can lose money).
+        """
+        prompt = f"""You are evaluating the quality of a trading decision AFTER the outcome is known.
+
+Trade: {symbol}
+Decision: {original_decision}
+Actual P&L: {actual_pnl:+.2f}%
+Original Reasoning: {original_reasoning}
+
+Score the REASONING QUALITY from 0.0 to 1.0:
+- 1.0 = Sound logic, considered risks, appropriate confidence
+- 0.5 = Adequate but missed important factors
+- 0.0 = Flawed logic, ignored obvious risks, overconfident
+
+A good trade that lost money due to luck should still score high.
+A bad trade that won due to luck should still score low.
+
+Respond with ONLY a JSON: {{"score": 0.X, "feedback": "one sentence"}}"""
+
+        try:
+            # Use cheap model for judging
+            if self._provider == "anthropic" and self._client:
+                resp = self._client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=100,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                result = json.loads(resp.content[0].text)
+            elif self._client:
+                resp = self._client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=100,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                result = json.loads(resp.choices[0].message.content)
+            else:
+                return 0.5
+
+            return float(result.get("score", 0.5))
+        except Exception as e:
+            logger.debug("LLM-as-Judge failed: %s", e)
+            return 0.5
