@@ -31,6 +31,14 @@ orchestrator:
   max_daily_loss_pct: 5.0
   cooldown_after_loss_streak: 3  # pause after N consecutive losses
 
+  # Cross-sectional breadth filter. When >60% of tracked assets are up on 1h,
+  # signals going SHORT get a conflict penalty; signals going LONG get a mild
+  # boost. Symmetric for bearish breadth. Disable if this proves too damping.
+  breadth_filter:
+    enabled: true
+    conflict_penalty: 0.70   # 30% confidence haircut when direction fights breadth
+    alignment_boost: 1.10    # 10% boost when direction aligns with breadth
+
 technical:
   min_confluences: 4
   confluence_tier_bonus:

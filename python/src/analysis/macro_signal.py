@@ -7,9 +7,15 @@ the strongest differentiator between winning and losing AI models.
 import logging
 import time
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Breadth thresholds: what fraction of tracked assets need to be up/down
+# for the market to be considered bullish-/bearish-biased.
+_BREADTH_LONG_THRESHOLD = 0.60
+_BREADTH_SHORT_THRESHOLD = 0.40
+_BREADTH_MIN_SAMPLE = 5  # require this many assets with usable history
 
 
 class MacroVerdict(Enum):
@@ -35,6 +41,10 @@ class MacroSignal:
         self._btc_prices: list = []  # store recent BTC prices for momentum calc
         self._cache: Optional[MacroVerdict] = None
         self._cache_time: float = 0
+        # Per-asset price history for cross-sectional breadth ("% of scanned
+        # assets trending up"). Fed from the orchestrator's existing price
+        # loop — no extra exchange calls.
+        self._asset_prices: Dict[str, List[Dict[str, float]]] = {}
 
     def record_btc_price(self, price: float) -> None:
         """Record a BTC price data point. Called each scan cycle."""
@@ -42,6 +52,85 @@ class MacroSignal:
         # Keep last 168 entries (~7 days at 1h intervals, or ~168 min at 1 min)
         if len(self._btc_prices) > 200:
             self._btc_prices = self._btc_prices[-168:]
+
+    def record_asset_price(self, asset: str, price: float) -> None:
+        """Record a price point for any scanned asset. Used for cross-sectional
+        breadth (what fraction of the traded basket is trending up).
+
+        Buffer is capped at ~48h of data; older samples are pruned.
+        """
+        if price is None or price <= 0:
+            return
+        now = time.time()
+        hist = self._asset_prices.setdefault(asset, [])
+        hist.append({"price": float(price), "time": now})
+        # Prune: keep samples within 48h, cap total to 200 per asset.
+        cutoff = now - 48 * 3600
+        if len(hist) > 200 or (hist and hist[0]["time"] < cutoff):
+            self._asset_prices[asset] = [p for p in hist if p["time"] >= cutoff][-200:]
+
+    def _return_over(self, asset: str, window_seconds: float) -> Optional[float]:
+        """Return the price change (current vs oldest price within window) for one asset,
+        as a fraction (0.05 == +5%). None if not enough history."""
+        hist = self._asset_prices.get(asset, [])
+        if len(hist) < 2:
+            return None
+        now = time.time()
+        target = now - window_seconds
+        # Find the oldest entry at or before the target time
+        older = [p for p in hist if p["time"] <= target + 300]  # 5-min tolerance
+        base = older[-1]["price"] if older else hist[0]["price"]
+        current = hist[-1]["price"]
+        if base <= 0:
+            return None
+        return (current - base) / base
+
+    def compute_breadth(self) -> Dict[str, Any]:
+        """Compute market breadth across all tracked assets.
+
+        Returns a dict with:
+          - up_1h_pct / up_24h_pct: fraction of assets with positive return over window
+          - sample_1h / sample_24h: how many assets had enough history to count
+          - bias: "long" (> long_threshold up), "short" (< short_threshold up), or "neutral"
+        """
+        up_1h = n_1h = 0
+        up_24h = n_24h = 0
+        for asset in self._asset_prices:
+            r1 = self._return_over(asset, 3600.0)
+            if r1 is not None:
+                n_1h += 1
+                if r1 > 0:
+                    up_1h += 1
+            r24 = self._return_over(asset, 86400.0)
+            if r24 is not None:
+                n_24h += 1
+                if r24 > 0:
+                    up_24h += 1
+
+        pct_1h = (up_1h / n_1h) if n_1h > 0 else None
+        pct_24h = (up_24h / n_24h) if n_24h > 0 else None
+
+        # Use 1h for primary bias (reacts faster); fall back to 24h if not enough
+        # 1h samples yet (early in a restart). Below min-sample threshold = neutral.
+        primary = pct_1h if (pct_1h is not None and n_1h >= _BREADTH_MIN_SAMPLE) else pct_24h
+        primary_n = n_1h if (pct_1h is not None and n_1h >= _BREADTH_MIN_SAMPLE) else n_24h
+
+        if primary is None or (primary_n or 0) < _BREADTH_MIN_SAMPLE:
+            bias = "neutral"
+        elif primary >= _BREADTH_LONG_THRESHOLD:
+            bias = "long"
+        elif primary <= _BREADTH_SHORT_THRESHOLD:
+            bias = "short"
+        else:
+            bias = "neutral"
+
+        return {
+            "up_1h_pct": round(pct_1h, 3) if pct_1h is not None else None,
+            "up_24h_pct": round(pct_24h, 3) if pct_24h is not None else None,
+            "sample_1h": n_1h,
+            "sample_24h": n_24h,
+            "bias": bias,
+        }
 
     def _btc_7d_return(self) -> Optional[float]:
         """Calculate BTC 7-day return percentage."""
@@ -164,6 +253,21 @@ class MacroSignal:
             except Exception as e:
                 logger.debug("Macro: failed to get funding/OI data: %s", e)
 
+        # 4. Cross-sectional asset breadth (what fraction of the traded basket
+        # is trending up). Adds one vote per direction when breadth is decisive.
+        breadth = self.compute_breadth()
+        if breadth["sample_1h"] >= _BREADTH_MIN_SAMPLE:
+            if breadth["bias"] == "long":
+                signals["bullish"] += 1
+                reasons.append(
+                    f"Breadth {int((breadth['up_1h_pct'] or 0)*100)}% up on 1h (bullish)"
+                )
+            elif breadth["bias"] == "short":
+                signals["bearish"] += 1
+                reasons.append(
+                    f"Breadth {int((breadth['up_1h_pct'] or 0)*100)}% up on 1h (bearish)"
+                )
+
         # Compute verdict
         bull_score = signals["bullish"]
         bear_score = signals["bearish"]
@@ -188,7 +292,11 @@ class MacroSignal:
         """Get macro state summary for Telegram alerts and logging."""
         verdict = self.evaluate()
         btc_return = self._btc_7d_return()
+        breadth = self.compute_breadth()
         return {
             "verdict": verdict.value,
             "btc_7d_return": round(btc_return, 2) if btc_return is not None else None,
+            "breadth_bias": breadth["bias"],
+            "breadth_up_1h_pct": breadth["up_1h_pct"],
+            "breadth_sample_1h": breadth["sample_1h"],
         }

@@ -228,6 +228,12 @@ class Orchestrator:
         self._macro_signal: Optional[MacroSignal] = None
         self._whale_detector: Optional[WhaleDetector] = None
 
+        # Cross-sectional breadth filter — penalize signals that fight the tape
+        breadth_cfg = orch_cfg.get("breadth_filter", {}) or {}
+        self._breadth_filter_enabled = bool(breadth_cfg.get("enabled", True))
+        self._breadth_conflict_penalty = float(breadth_cfg.get("conflict_penalty", 0.70))
+        self._breadth_alignment_boost = float(breadth_cfg.get("alignment_boost", 1.10))
+
         # Factor scoring (IC/ICIR) + permutation-importance pruning
         self._factor_scorer = FactorScorer()
         self._factor_scores: Dict[str, Dict] = {}  # asset -> factor scores
@@ -760,15 +766,18 @@ class Orchestrator:
             except Exception:
                 pass
 
-        # Record prices for whale detector (all scanned assets)
-        if self._whale_detector:
-            for asset in self._assets:
-                try:
-                    price = self._get_current_price(asset)
-                    if price and price > 0:
+        # Record prices for whale detector + macro-breadth tracker
+        # (one fetch per asset, fed to both consumers)
+        for asset in self._assets:
+            try:
+                price = self._get_current_price(asset)
+                if price and price > 0:
+                    if self._whale_detector:
                         self._whale_detector.record_price(asset, price)
-                except Exception:
-                    pass
+                    if self._macro_signal:
+                        self._macro_signal.record_asset_price(asset, price)
+            except Exception:
+                pass
 
         # Fast risk-off: BTC crash detection
         if self._macro_signal and self._macro_signal.check_fast_risk_off():
@@ -1311,6 +1320,59 @@ class Orchestrator:
         if fused_signal:
             ctx["fused_direction"] = fused_signal.direction.value
             ctx["fused_confidence"] = fused_signal.confidence
+
+        # -- Step 3a: Cross-sectional breadth bias --
+        # If the scanned basket is overwhelmingly up, fade shorts; if overwhelmingly
+        # down, fade longs. Mild boost when direction aligns with breadth.
+        # Rationale: "Context first, then pattern" — don't fight the tape on
+        # setups that look great in isolation but contradict broad crypto flow.
+        if fused_signal and self._macro_signal and self._breadth_filter_enabled:
+            breadth = self._macro_signal.compute_breadth()
+            ctx["breadth_bias"] = breadth["bias"]
+            ctx["breadth_up_1h_pct"] = breadth["up_1h_pct"]
+            ctx["breadth_sample_1h"] = breadth["sample_1h"]
+            if breadth["bias"] != "neutral" and breadth["sample_1h"] >= 5:
+                fused_dir_numeric = _direction_to_numeric(fused_signal.direction)
+                aligned = (
+                    (breadth["bias"] == "long" and fused_dir_numeric > 0)
+                    or (breadth["bias"] == "short" and fused_dir_numeric < 0)
+                )
+                conflict = (
+                    (breadth["bias"] == "long" and fused_dir_numeric < 0)
+                    or (breadth["bias"] == "short" and fused_dir_numeric > 0)
+                )
+                original_conf = fused_signal.confidence
+                if conflict:
+                    fused_signal.confidence = max(
+                        0.0, original_conf * self._breadth_conflict_penalty
+                    )
+                    fused_signal.metadata["breadth_adjustment"] = {
+                        "bias": breadth["bias"],
+                        "action": "conflict_penalty",
+                        "multiplier": self._breadth_conflict_penalty,
+                        "conf_before": round(original_conf, 2),
+                        "conf_after": round(fused_signal.confidence, 2),
+                        "up_1h_pct": breadth["up_1h_pct"],
+                    }
+                    logger.info(
+                        "BREADTH CONFLICT %s: %s vs breadth=%s (up=%d%%) — %.1f%% → %.1f%%",
+                        asset, fused_signal.direction.value, breadth["bias"],
+                        int((breadth["up_1h_pct"] or 0) * 100),
+                        original_conf, fused_signal.confidence,
+                    )
+                elif aligned:
+                    fused_signal.confidence = min(
+                        100.0, original_conf * self._breadth_alignment_boost
+                    )
+                    fused_signal.metadata["breadth_adjustment"] = {
+                        "bias": breadth["bias"],
+                        "action": "alignment_boost",
+                        "multiplier": self._breadth_alignment_boost,
+                        "conf_before": round(original_conf, 2),
+                        "conf_after": round(fused_signal.confidence, 2),
+                        "up_1h_pct": breadth["up_1h_pct"],
+                    }
+                ctx["fused_confidence"] = fused_signal.confidence
 
         if fused_signal is None or fused_signal.direction == Direction.HOLD:
             result["reason"] = "no_actionable_signal"
