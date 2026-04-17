@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  serverExternalPackages: ["ccxt"],
+  serverExternalPackages: ["ccxt", "viem"],
 };
 
 export default nextConfig;
