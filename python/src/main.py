@@ -465,6 +465,13 @@ def main() -> int:
             profile_name, profile_yaml,
         )
 
+    # Re-resolve env vars after all overlays (live + profile) so that any ${VAR}
+    # placeholders introduced by overlay YAMLs — e.g. ${HYPERLIQUID_PERSONAL_ADDRESS}
+    # in profiles/personal.yaml — actually get substituted. load_config() only
+    # resolves once at base-load time; overlays applied after that need a re-pass.
+    from src.config import _resolve_env_vars
+    config = _resolve_env_vars(config)
+
     # Log critical config values for debugging
     logger.info(
         "CONFIG: min_confidence_threshold=%s, mode=%s, assets=%s",
