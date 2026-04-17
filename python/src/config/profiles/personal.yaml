@@ -1,0 +1,57 @@
+# Personal wallet profile — aggressive, Telegram DISABLED
+#
+# Applied via PROFILE=personal env var (set on the second Railway service).
+# Merges on top of default.yaml + live.yaml (if --mode live).
+#
+# Required env vars on the personal Railway service:
+#   HYPERLIQUID_PERSONAL_ADDRESS   - the 0x8249... main wallet address
+#   HYPERLIQUID_PERSONAL_PRIVATE_KEY - the agent wallet private key
+#                                     (0x9FA1... generated on 2026-04-17)
+#   ANTHROPIC_API_KEY              - shared with bot service (meta-reasoning)
+#
+# Telegram stays disabled here because colleagues see the bot's Telegram feed.
+profile:
+  name: "personal"
+  description: "Personal wallet — aggressive, Telegram OFF"
+
+# Per-profile data paths so the two services can run side-by-side without
+# colliding on SQLite files / audit logs.
+system:
+  db_path: "data/trading_personal.db"
+
+reconciliation:
+  db_path: "data/positions_personal.db"
+
+audit:
+  directory: "data/audit_personal"
+
+data:
+  base_dir: "data/personal"
+
+# More aggressive signal acceptance — catches more trades on the same signals
+orchestrator:
+  min_confidence_threshold: 65
+  max_daily_trades: 20
+
+# Allow multiple concurrent positions
+risk:
+  max_concurrent_positions: 3
+
+safety:
+  max_positions: 3
+  daily_loss_limit_pct: 25.0
+  weekly_loss_limit_pct: 50.0
+
+# Separate Hyperliquid wallet + higher leverage cap
+execution:
+  hyperliquid:
+    enabled: true
+    user_address: "${HYPERLIQUID_PERSONAL_ADDRESS}"
+    private_key: "${HYPERLIQUID_PERSONAL_PRIVATE_KEY}"
+    default_leverage: 5
+    max_leverage: 5
+
+# Telegram OFF — colleagues see the main bot's alerts
+monitoring:
+  telegram:
+    enabled: false

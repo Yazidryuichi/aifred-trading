@@ -1,0 +1,21 @@
+# Bot wallet profile — main account, Telegram alerts ON
+#
+# This is the default profile. Applied when PROFILE=bot (or unset).
+# The live.yaml overlay already contains the bot's production settings; this
+# file only names the profile and pins data paths so they don't collide with
+# any other profile running on the same persistence layer.
+profile:
+  name: "bot"
+  description: "Main wallet — conservative, Telegram alerts enabled"
+
+system:
+  db_path: "data/trading.db"
+
+reconciliation:
+  db_path: "data/positions.db"
+
+audit:
+  directory: "data/audit"
+
+data:
+  base_dir: "data"

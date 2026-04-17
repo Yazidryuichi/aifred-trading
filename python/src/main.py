@@ -235,6 +235,9 @@ def print_startup_banner(config: dict, args: argparse.Namespace) -> None:
     mode = config.get("execution", {}).get("mode", "paper")
     scan_interval = config.get("orchestrator", {}).get("scan_interval_seconds", 60)
     confidence = config.get("orchestrator", {}).get("min_confidence_threshold", 70)
+    profile_cfg = config.get("profile", {}) or {}
+    profile_name = profile_cfg.get("name", os.environ.get("PROFILE", "bot"))
+    telegram_on = config.get("monitoring", {}).get("telegram", {}).get("enabled", False)
 
     asset_count = sum(
         len(config.get("assets", {}).get(k, []))
@@ -245,6 +248,7 @@ def print_startup_banner(config: dict, args: argparse.Namespace) -> None:
 ================================================================================
   AIFred Multi-Agent Trading System
 ================================================================================
+  Profile:          {profile_name.upper()}{'  (telegram ON)' if telegram_on else '  (telegram OFF)'}
   Mode:             {mode.upper()}
   Scan Interval:    {scan_interval}s
   Confidence:       {confidence}%
@@ -439,6 +443,27 @@ def main() -> int:
             if live_overlay:
                 config = merge_configs(config, live_overlay)
             logger.info("Live config overlay applied from %s", live_yaml)
+
+    # Apply per-wallet profile overlay (PROFILE env var, default "bot").
+    # This lets one codebase drive multiple Railway services — one per wallet —
+    # each with its own HL credentials, risk limits, data paths, telegram state.
+    profile_name = os.environ.get("PROFILE", "bot").strip().lower() or "bot"
+    profile_yaml = os.path.join(
+        os.path.dirname(__file__), "config", "profiles", f"{profile_name}.yaml"
+    )
+    if os.path.exists(profile_yaml):
+        from src.config import merge_configs
+        import yaml
+        with open(profile_yaml) as f:
+            profile_overlay = yaml.safe_load(f)
+        if profile_overlay:
+            config = merge_configs(config, profile_overlay)
+        logger.info("Profile overlay '%s' applied from %s", profile_name, profile_yaml)
+    else:
+        logger.warning(
+            "PROFILE=%s set but %s not found — continuing with base config",
+            profile_name, profile_yaml,
+        )
 
     # Log critical config values for debugging
     logger.info(
