@@ -51,5 +51,9 @@ structlog>=23.2.0
 # Telegram alerts
 python-telegram-bot>=21.0
 
+# AI/LLM Providers (meta-reasoning)
+anthropic>=0.30.0
+openai>=1.0.0
+
 # Health server
 aiohttp>=3.9.0
